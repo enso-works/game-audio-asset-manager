@@ -28,6 +28,8 @@ struct EditorView: View {
         .navigationTitle(editor.fileName.isEmpty ? "Editor" : editor.fileName)
         .toolbar { EditorToolbar() }
         .sheet(isPresented: $editor.showExport) { ExportView() }
+        .sheet(isPresented: $editor.showSaveAs) { SaveAsView() }
+        .sheet(isPresented: $editor.showSaveRegions) { SaveRegionsView() }
         .onAppear {
             editor.undoManager = undoManager
             installKeyMonitor()
@@ -261,10 +263,12 @@ private struct RegionsPanel: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 if !editor.regions.isEmpty {
+                    Button("Save as Sounds...", systemImage: "square.split.2x1") { editor.showSaveRegions = true }
+                        .help("Save each region as its own WAV in a project folder")
                     Button("Remove All", role: .destructive) { editor.removeAllRegions() }
-                        .controlSize(.small)
                 }
             }
+            .controlSize(.small)
             if editor.regions.isEmpty {
                 Text("Select a sound in the waveform and press R to mark it. Use this to cut many sounds out of one long recording, then export them all at once.")
                     .font(.callout)

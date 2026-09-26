@@ -15,18 +15,38 @@ struct AudioPrepareApp: App {
                 .environment(editor)
                 .environment(navigation)
                 .frame(minWidth: 1100, minHeight: 680)
-                .onAppear { downloads.library = library }
+                .onAppear {
+                    downloads.library = library
+                    editor.library = library
+                    library.onMove = { old, new in
+                        editor.fileMoved(from: old, to: new)
+                        if navigation.selection == .file(old) { navigation.selection = .file(new) }
+                    }
+                }
         }
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandGroup(replacing: .saveItem) {
-                Button("Save Copy to Library") {
+                Button("Save") {
                     Task {
-                        if let url = await editor.saveToLibrary(library) { navigation.selection = .file(url) }
+                        switch await editor.save() {
+                        case .saved(let url): navigation.selection = .file(url)
+                        case .needsSaveAs: editor.showSaveAs = true
+                        case .failed: break
+                        }
                     }
                 }
                 .keyboardShortcut("s")
                 .disabled(editor.clip == nil)
+
+                Button("Save As...") { editor.showSaveAs = true }
+                    .keyboardShortcut("s", modifiers: [.command, .shift])
+                    .disabled(editor.clip == nil)
+
+                Button("Save Regions as Sounds...") { editor.showSaveRegions = true }
+                    .disabled(editor.regions.isEmpty)
+
+                Divider()
 
                 Button("Export...") { editor.showExport = true }
                     .keyboardShortcut("e")
@@ -74,15 +94,15 @@ struct SettingsView: View {
                         panel.canCreateDirectories = true
                         if panel.runModal() == .OK, let url = panel.url { library.setRoot(url) }
                     }
-                    Button("Open") { NSWorkspace.shared.open(library.root) }
+                    Button("Open") { NSWorkspace.shared.open(library.projectsFolder) }
                 }
             }
-            LabeledContent("Export folder") {
+            LabeledContent("Export folder (\(library.currentProject))") {
                 HStack {
                     Text(library.exportFolder.path(percentEncoded: false))
                         .lineLimit(1)
                         .truncationMode(.middle)
-                    Button("Reset") { library.setExportFolder(library.defaultExportFolder) }
+                    Button("Reset") { library.setExportFolder(nil) }
                 }
             }
             LabeledContent("yt-dlp") { Text(Tools.ytDlp?.path ?? "Not found (brew install yt-dlp)") }

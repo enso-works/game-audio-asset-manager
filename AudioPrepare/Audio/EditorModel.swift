@@ -1,7 +1,7 @@
 import AppKit
 import Observation
 
-struct Region: Identifiable, Equatable {
+struct Region: Identifiable, Equatable, Codable {
     let id: UUID
     var name: String
     var start: Int
@@ -18,7 +18,12 @@ final class EditorModel {
     private(set) var clip: AudioClip?
     private(set) var peaks = Peaks()
     private(set) var version = 0
-    private(set) var isDirty = false
+    /// Revision ids: any change bumps `revision`, sample changes also bump `audioRevision`.
+    /// Comparing against the saved ids means undoing back to the saved state counts as clean.
+    private(set) var revision = 0
+    private(set) var audioRevision = 0
+    private(set) var savedRevision = 0
+    private(set) var savedAudioRevision = 0
     private(set) var regions: [Region] = []
     private(set) var viewStart: Double = 0
     private(set) var viewLength: Double = 1
@@ -31,19 +36,25 @@ final class EditorModel {
     var fadeMs = 100
     var gainStepDb = 3.0
     var showExport = false
+    var showSaveAs = false
+    var showSaveRegions = false
 
     let player = Player()
     @ObservationIgnored var undoManager: UndoManager? {
         didSet { undoManager?.levelsOfUndo = 30 }
     }
+    @ObservationIgnored weak var library: Library?
     @ObservationIgnored private var loadToken = UUID()
     @ObservationIgnored private var regionCounter = 0
+    @ObservationIgnored private var revisionCounter = 0
 
     init() {
         player.onTick = { [weak self] position in self?.follow(position) }
     }
 
     var fileName: String { url?.deletingPathExtension().lastPathComponent ?? "" }
+    var isDirty: Bool { revision != savedRevision }
+    var audioDirty: Bool { audioRevision != savedAudioRevision }
     var frameCount: Int { clip?.frameCount ?? 0 }
     var sampleRate: Double { clip?.sampleRate ?? 44100 }
     var hasSelection: Bool { selection.map { !$0.isEmpty } ?? false }
@@ -73,9 +84,10 @@ final class EditorModel {
             version += 1
             selection = nil
             cursor = 0
-            regions = []
-            regionCounter = 0
-            isDirty = false
+            let meta = library?.meta(for: url) ?? SoundMeta()
+            regions = (meta.regions ?? []).filter { $0.end <= clip.frameCount && $0.start < $0.end }
+            regionCounter = regions.count
+            markSaved()
             zoomToFit()
             undoManager?.removeAllActions(withTarget: self)
         } catch {
@@ -93,38 +105,124 @@ final class EditorModel {
         peaks = Peaks()
         regions = []
         selection = nil
-        isDirty = false
+        markSaved()
         version += 1
         undoManager?.removeAllActions(withTarget: self)
     }
 
     func discardChanges() {
-        isDirty = false
+        markSaved()
     }
 
-    /// Saves the edited audio as a WAV in the library's "edited" folder.
-    @discardableResult
-    func saveToLibrary(_ library: Library) async -> URL? {
-        guard let clip, let url else { return nil }
-        let editedFolder = library.url(for: .edited)
-        let isOwnFile = url.deletingLastPathComponent().standardizedFileURL == editedFolder.standardizedFileURL
-            && url.pathExtension.lowercased() == "wav"
-        let destination = isOwnFile ? url : library.uniqueURL(in: editedFolder, base: fileName, ext: "wav")
-        let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("wav")
+    /// Follows a file that was moved or renamed in the library.
+    func fileMoved(from old: URL, to new: URL) {
+        guard let url else { return }
+        if url == old {
+            self.url = new
+        } else if url.path.hasPrefix(old.path + "/") {
+            self.url = URL(fileURLWithPath: new.path + url.path.dropFirst(old.path.count))
+        }
+    }
+
+    private func markSaved() {
+        savedRevision = revision
+        savedAudioRevision = audioRevision
+    }
+
+    private func nextRevision() -> Int {
+        revisionCounter += 1
+        return revisionCounter
+    }
+
+    enum SaveResult {
+        case saved(URL)
+        case needsSaveAs
+        case failed
+    }
+
+    /// Saves in place when possible: metadata only if the samples are untouched, or overwriting
+    /// a WAV that lives in a project folder. Anything else needs Save As.
+    func save() async -> SaveResult {
+        guard let url, let clip, let library else { return .failed }
+        guard library.contains(url) else { return .needsSaveAs }
+        if !audioDirty {
+            persistMeta(for: url)
+            markSaved()
+            return .saved(url)
+        }
+        guard url.pathExtension.lowercased() == "wav", !library.isInInbox(url) else { return .needsSaveAs }
         do {
-            try await Task.detached { try clip.writeWAV(to: temp, range: 0..<clip.frameCount) }.value
-            if FileManager.default.fileExists(atPath: destination.path) {
-                _ = try FileManager.default.replaceItemAt(destination, withItemAt: temp)
-            } else {
-                try FileManager.default.moveItem(at: temp, to: destination)
-            }
-            self.url = destination
-            isDirty = false
+            try await write(clip, to: url)
+            persistMeta(for: url)
+            markSaved()
             library.refresh()
-            return destination
+            return .saved(url)
+        } catch {
+            errorMessage = "Save failed: \(error.localizedDescription)"
+            return .failed
+        }
+    }
+
+    /// Writes the edited sound as a WAV into a project folder. Source info and edit data go with it.
+    func saveAs(in folder: URL, name: String, removeOriginal: Bool) async -> URL? {
+        guard let url, let clip, let library else { return nil }
+        let base = Library.cleanName(name).isEmpty ? fileName : Library.cleanName(name)
+        var destination = folder.appendingPathComponent(base).appendingPathExtension("wav")
+        if destination.standardizedFileURL != url.standardizedFileURL {
+            destination = library.uniqueURL(in: folder, base: base, ext: "wav")
+        }
+        let source = library.meta(for: url)
+        do {
+            try await write(clip, to: destination)
         } catch {
             errorMessage = "Save failed: \(error.localizedDescription)"
             return nil
+        }
+        library.updateMeta(for: destination) { $0 = source.sourceOnly }
+        persistMeta(for: destination)
+        if removeOriginal, destination.standardizedFileURL != url.standardizedFileURL {
+            library.trash(url)
+        }
+        self.url = destination
+        markSaved()
+        library.refresh()
+        return destination
+    }
+
+    /// Writes every region as its own WAV, e.g. to split a sound pack into single sounds.
+    func saveRegionsAsSounds(in folder: URL, prefix: String) async -> [URL] {
+        guard let url, let clip, let library else { return [] }
+        let source = library.meta(for: url).sourceOnly
+        var results: [URL] = []
+        for region in regions {
+            let destination = library.uniqueURL(in: folder, base: Library.cleanName(prefix + region.name), ext: "wav")
+            let part = AudioOps.slice(clip, region.range)
+            do {
+                try await write(part, to: destination)
+                if source.hasSource { library.updateMeta(for: destination) { $0 = source } }
+                results.append(destination)
+            } catch {
+                errorMessage = "Save failed: \(error.localizedDescription)"
+            }
+        }
+        library.refresh()
+        return results
+    }
+
+    private func write(_ clip: AudioClip, to destination: URL) async throws {
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("wav")
+        try await Task.detached { try clip.writeWAV(to: temp, range: 0..<clip.frameCount) }.value
+        if FileManager.default.fileExists(atPath: destination.path) {
+            _ = try FileManager.default.replaceItemAt(destination, withItemAt: temp)
+        } else {
+            try FileManager.default.moveItem(at: temp, to: destination)
+        }
+    }
+
+    private func persistMeta(for url: URL) {
+        let regions = self.regions
+        library?.updateMeta(for: url) { meta in
+            meta.regions = regions.isEmpty ? nil : regions
         }
     }
 
@@ -136,10 +234,15 @@ final class EditorModel {
         var regions: [Region]
         var selection: Range<Int>?
         var cursor: Int
+        var revision: Int
+        var audioRevision: Int
     }
 
     private func snapshot() -> Snapshot? {
-        clip.map { Snapshot(clip: $0, peaks: peaks, regions: regions, selection: selection, cursor: cursor) }
+        clip.map {
+            Snapshot(clip: $0, peaks: peaks, regions: regions, selection: selection, cursor: cursor,
+                     revision: revision, audioRevision: audioRevision)
+        }
     }
 
     private func apply(_ snapshot: Snapshot, fit: Bool = false) {
@@ -149,6 +252,8 @@ final class EditorModel {
         regions = snapshot.regions
         selection = snapshot.selection
         cursor = min(snapshot.cursor, snapshot.clip.frameCount)
+        revision = snapshot.revision
+        audioRevision = snapshot.audioRevision
         version += 1
         if fit || wasFit { zoomToFit() } else { setView(start: viewStart, length: viewLength) }
     }
@@ -165,7 +270,6 @@ final class EditorModel {
         guard let current = self.snapshot() else { return }
         player.stop()
         apply(snapshot)
-        isDirty = true
         registerUndo(restoring: current, name: name)
     }
 
@@ -188,9 +292,10 @@ final class EditorModel {
             var after = before
             after.clip = newClip
             after.peaks = newPeaks
+            after.revision = nextRevision()
+            after.audioRevision = after.revision
             update(&after)
             apply(after, fit: fit)
-            isDirty = true
             registerUndo(restoring: before, name: name)
             isBusy = false
         }
@@ -201,7 +306,7 @@ final class EditorModel {
         guard let before = snapshot() else { return }
         change(&regions)
         regions.sort { $0.start < $1.start }
-        isDirty = true
+        revision = nextRevision()
         registerUndo(restoring: before, name: name)
     }
 
