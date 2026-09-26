@@ -73,7 +73,7 @@ struct DownloaderView: View {
                 ContentUnavailableView(
                     "Nothing downloading",
                     systemImage: "arrow.down.circle",
-                    description: Text("MP3s are saved to \(library.url(for: .downloads).path(percentEncoded: false)) and show up in the sidebar.")
+                    description: Text("MP3s go into the Inbox of \(library.currentProject) and show up in the sidebar.")
                 )
             } else {
                 List(queue.items) { item in

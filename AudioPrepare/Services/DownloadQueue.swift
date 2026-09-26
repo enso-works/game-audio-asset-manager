@@ -101,7 +101,7 @@ final class DownloadQueue {
             "--progress-template", "download:PROGRESS:%(progress._percent_str)s",
             "--print", "before_dl:TITLE:%(title)s",
             "--print", "after_move:FILE:%(filepath)s",
-            "--paths", library.url(for: .downloads).path,
+            "--paths", library.inboxURL.path,
             "--output", "%(title).150B [%(id)s].%(ext)s",
         ]
         if let ffmpeg = Tools.ffmpeg { arguments += ["--ffmpeg-location", ffmpeg.path] }
