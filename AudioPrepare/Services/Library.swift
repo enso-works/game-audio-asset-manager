@@ -23,7 +23,12 @@ final class Library {
         let defaults = UserDefaults.standard
         let fallback = FileManager.default.urls(for: .musicDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("AudioPrepare", isDirectory: true)
-        root = defaults.string(forKey: "libraryRoot").map { URL(fileURLWithPath: $0, isDirectory: true) } ?? fallback
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            // Unit tests host the app; keep them away from the real library.
+            root = FileManager.default.temporaryDirectory.appendingPathComponent("AudioPrepareTests-\(UUID().uuidString)", isDirectory: true)
+        } else {
+            root = defaults.string(forKey: "libraryRoot").map { URL(fileURLWithPath: $0, isDirectory: true) } ?? fallback
+        }
         currentProject = defaults.string(forKey: "currentProject") ?? "Default"
         loadProjects()
     }

@@ -3,3 +3,4 @@ AudioPrepare.xcodeproj/
 .DS_Store
 xcuserdata/
 build-debug/
+build-test/

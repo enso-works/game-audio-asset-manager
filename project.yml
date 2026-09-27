@@ -14,6 +14,9 @@ targets:
     platform: macOS
     sources:
       - AudioPrepare
+    scheme:
+      testTargets:
+        - AudioPrepareTests
     settings:
       base:
         PRODUCT_NAME: Audio Prepare
@@ -30,3 +33,18 @@ targets:
         ENABLE_APP_SANDBOX: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SWIFT_OBJC_BRIDGING_HEADER: AudioPrepare/Support/AudioPrepare-Bridging-Header.h
+  AudioPrepareTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - AudioPrepareTests
+    dependencies:
+      - target: AudioPrepare
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.bavrk.audioprepare.tests
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Audio Prepare.app/Contents/MacOS/Audio Prepare"
+        BUNDLE_LOADER: "$(TEST_HOST)"
