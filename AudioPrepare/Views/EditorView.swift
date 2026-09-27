@@ -31,6 +31,7 @@ struct EditorView: View {
         .sheet(isPresented: $editor.showExport) { ExportView() }
         .sheet(isPresented: $editor.showSaveAs) { SaveAsView() }
         .sheet(isPresented: $editor.showSaveRegions) { SaveRegionsView() }
+        .sheet(isPresented: $editor.showVariations) { VariationsView() }
         .onAppear {
             editor.undoManager = undoManager
             installKeyMonitor()
@@ -239,6 +240,7 @@ private struct EditBar: View {
             row("Process") { processButtons }
             row("Filter") { filterButtons }
             row("Loop") { loopButtons }
+            row("Game") { gameButtons }
             HStack {
                 Text(editor.hasSelection ? "Processing applies to the selection." : "Nothing selected: processing applies to the whole file.")
                     .foregroundStyle(.secondary)
@@ -328,6 +330,25 @@ private struct EditBar: View {
         }
         .labelsHidden()
         .fixedSize()
+    }
+
+    @ViewBuilder private var gameButtons: some View {
+        @Bindable var editor = editor
+        Button("Preview", systemImage: "gamecontroller") { editor.playGamePreview() }
+            .help("Play it 6 times with random pitch and volume, like the game would")
+        Picker("Pitch spread", selection: $editor.pitchSpread) {
+            ForEach([0.5, 1, 2, 3, 5], id: \.self) { Text(String(format: "±%g st", $0)).tag($0) }
+        }
+        .labelsHidden()
+        .fixedSize()
+        .help("Random pitch range in semitones")
+        Button("Variations...", systemImage: "square.stack.3d.up") { editor.showVariations = true }
+            .help("Save several pitched copies (jump_01, jump_02, ...) into a project folder")
+        if let pitch = editor.player.previewPitch {
+            Text(String(format: "%+.1f st", pitch))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
     }
 
     private static func hertz(_ value: Double) -> String {

@@ -44,6 +44,9 @@ final class EditorModel {
     var loopCrossfadeMs = 250
     var lowCutHz = 120.0
     var highCutHz = 8000.0
+    /// Random pitch range (± semitones) for the game preview and variations.
+    var pitchSpread = 2.0
+    var showVariations = false
     var showExport = false
     var showSaveAs = false
     var showSaveRegions = false
@@ -569,6 +572,55 @@ final class EditorModel {
             range = start..<clip.frameCount
         }
         player.play(clip, range: range, loop: loopPlayback)
+    }
+
+    /// Plays the selection (or whole sound) 6 times with random pitch and volume, like a game would.
+    func playGamePreview() {
+        guard let clip else { return }
+        player.playGamePreview(clip, range: editRange, hits: 6, semitones: pitchSpread, volumeJitterDb: 2, gap: 0.25)
+    }
+
+    /// Evenly spaced pitch offsets, e.g. 5 variants at ±2 semitones -> -2, -1, 0, +1, +2.
+    static func variationPitches(count: Int, spread: Double) -> [Double] {
+        guard count > 1 else { return [0] }
+        return (0..<count).map { -spread + 2 * spread * Double($0) / Double(count - 1) }
+    }
+
+    /// Renders pitched copies of the selection (or whole sound) into a project folder with ffmpeg.
+    /// Pitch changes speed too (like a game engine), unless keepLength time-stretches it back.
+    func saveVariations(in folder: URL, name: String, count: Int, keepLength: Bool) async -> [URL] {
+        guard let url, let clip, let library, let ffmpeg = Tools.ffmpeg else { return [] }
+        let range = editRange
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("wav")
+        defer { try? FileManager.default.removeItem(at: temp) }
+        do {
+            try await Task.detached { try clip.writeWAV(to: temp, range: range) }.value
+        } catch {
+            errorMessage = "Variations failed: \(error.localizedDescription)"
+            return []
+        }
+        let source = library.meta(for: url).sourceOnly
+        let base = Library.cleanName(name).isEmpty ? Exporter.sanitize(fileName) : Library.cleanName(name)
+        let rate = Int(clip.sampleRate)
+        var results: [URL] = []
+        for (index, pitch) in Self.variationPitches(count: count, spread: pitchSpread).enumerated() {
+            let ratio = pow(2, pitch / 12)
+            var filters = ["asetrate=\(Double(rate) * ratio)", "aresample=\(rate)"]
+            if keepLength { filters.append("atempo=\(1 / ratio)") }
+            let destination = library.uniqueURL(in: folder, base: String(format: "%@_%02d", base, index + 1), ext: "wav")
+            let log = LogTail()
+            let status = try? await ProcessRunner().run(
+                ffmpeg, ["-y", "-v", "error", "-i", temp.path, "-af", filters.joined(separator: ","), "-c:a", "pcm_f32le", destination.path]
+            ) { log.append($0) }
+            guard status == 0 else {
+                errorMessage = "Variation \(index + 1) failed: \(log.text)"
+                continue
+            }
+            if source.hasSource { library.updateMeta(for: destination) { $0 = source } }
+            results.append(destination)
+        }
+        library.refresh()
+        return results
     }
 
     func playRegion(_ region: Region) {

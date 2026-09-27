@@ -158,3 +158,77 @@ struct SaveRegionsView: View {
         }
     }
 }
+
+struct VariationsView: View {
+    @Environment(EditorModel.self) private var editor
+    @Environment(Library.self) private var library
+    @Environment(Navigation.self) private var navigation
+    @Environment(\.dismiss) private var dismiss
+
+    @AppStorage("variationCount") private var count = 5
+    @AppStorage("variationKeepLength") private var keepLength = false
+    @State private var name = ""
+    @State private var folder: URL?
+    @State private var saving = false
+
+    var body: some View {
+        @Bindable var editor = editor
+        VStack(alignment: .leading, spacing: 0) {
+            Form {
+                Section {
+                    Stepper("Variants: \(count)", value: $count, in: 2...12)
+                    Picker("Pitch spread", selection: $editor.pitchSpread) {
+                        ForEach([0.5, 1, 2, 3, 5], id: \.self) { Text(String(format: "±%g semitones", $0)).tag($0) }
+                    }
+                    Toggle("Keep original length (time-stretch)", isOn: $keepLength)
+                    LabeledContent("Pitches") {
+                        Text(EditorModel.variationPitches(count: count, spread: editor.pitchSpread)
+                            .map { String(format: "%+.1f", $0) }.joined(separator: "  "))
+                            .font(.callout.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Variations of \(editor.hasSelection ? "the selection" : "the whole sound")")
+                } footer: {
+                    Text("Without time-stretch, higher pitches also play faster, the same as Godot's pitch_scale or three.js playbackRate. Pick a random variant at runtime to avoid repetition.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Section("Save as WAV into") {
+                    TextField("Name", text: $name)
+                    if let folder = Binding($folder) {
+                        FolderPicker(folder: folder)
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            HStack {
+                if saving { ProgressView().controlSize(.small) }
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Save \(count) Variants") { Task { await save() } }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(saving || folder == nil)
+            }
+            .padding([.horizontal, .bottom], 20)
+        }
+        .frame(width: 500)
+        .onAppear {
+            name = Exporter.sanitize(editor.fileName)
+            folder = FolderPicker.initialFolder(library)
+        }
+    }
+
+    private func save() async {
+        guard let folder else { return }
+        saving = true
+        defer { saving = false }
+        FolderPicker.remember(folder)
+        let urls = await editor.saveVariations(in: folder, name: name, count: count, keepLength: keepLength)
+        if !urls.isEmpty {
+            dismiss()
+            if !editor.isDirty { navigation.selection = .folder(folder) }
+        }
+    }
+}
