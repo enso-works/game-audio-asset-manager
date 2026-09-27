@@ -20,10 +20,18 @@ final class Player {
     @ObservationIgnored private var positionMap: (Int) -> Int = { $0 }
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var generation = 0
+    @ObservationIgnored private var streamClip: AudioClip?
+    @ObservationIgnored private var pendingChunks: [(Range<Int>, Bool)] = []
+    @ObservationIgnored private var isOffline = false
 
-    init() {
+    /// `offlineFormat` renders without an audio device (unit tests pull audio with `renderOffline`).
+    init(offlineFormat: AVAudioFormat? = nil) {
         engine.attach(node)
         engine.attach(varispeed)
+        if let offlineFormat {
+            try? engine.enableManualRenderingMode(.offline, format: offlineFormat, maximumFrameCount: 4096)
+            isOffline = true
+        }
         // Device changes (headphones unplugged, new output) stop the engine and invalidate the graph.
         NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.resetAfterDeviceChange() }
@@ -72,32 +80,64 @@ final class Player {
         }
     }
 
+    /// Seconds per streamed chunk; two chunks are kept queued ahead of the playhead.
+    private static let chunkSeconds = 2.0
+
+    /// Plays segments in order. Non-looping audio is streamed in short chunks so starting playback
+    /// never copies a whole (possibly hour-long) file; a looping segment is one buffer that repeats.
     private func schedule(_ clip: AudioClip, segments: [(Range<Int>, Bool)], map: @escaping (Int) -> Int) {
         stop()
-        let buffers = segments.compactMap { segment in clip.makeBuffer(segment.0).map { ($0, segment.1) } }
-        guard buffers.count == segments.count, let format = buffers.first?.0.format, prepare(format) else { return }
+        guard !segments.isEmpty,
+              let format = AVAudioFormat(standardFormatWithSampleRate: clip.sampleRate, channels: AVAudioChannelCount(clip.channelCount)),
+              prepare(format)
+        else { return }
         varispeed.rate = 1
         node.volume = 1
+
+        let chunk = max(1, Int(Self.chunkSeconds * clip.sampleRate))
+        var chunks: [(Range<Int>, Bool)] = []
+        for (range, loops) in segments where !range.isEmpty {
+            if loops {
+                chunks.append((range, true))
+            } else {
+                var start = range.lowerBound
+                while start < range.upperBound {
+                    chunks.append((start..<min(start + chunk, range.upperBound), false))
+                    start += chunk
+                }
+            }
+        }
+        guard !chunks.isEmpty else { return }
 
         generation += 1
         let current = generation
         positionMap = map
-        for (index, (segment, loops)) in buffers.enumerated() {
-            let isLast = index == buffers.count - 1
-            node.scheduleBuffer(segment, at: nil, options: loops ? .loops : [], completionCallbackType: .dataPlayedBack) { [weak self] _ in
-                guard isLast else { return }
-                DispatchQueue.main.async {
-                    MainActor.assumeIsolated {
-                        guard let self, self.generation == current else { return }
-                        self.stop()
-                    }
-                }
-            }
-        }
+        streamClip = clip
+        pendingChunks = chunks
+        scheduleNextChunk(generation: current)
+        scheduleNextChunk(generation: current)
         guard guarded({ node.play() }) else { return }
         isPlaying = true
         position = map(0)
         startTimer()
+    }
+
+    private func scheduleNextChunk(generation current: Int) {
+        guard generation == current, !pendingChunks.isEmpty, let clip = streamClip else { return }
+        let (range, loops) = pendingChunks.removeFirst()
+        let isLast = pendingChunks.isEmpty && !loops
+        guard let buffer = clip.makeBuffer(range) else { return }
+        // Queue the next chunk as soon as this one is consumed; stop once the final one has played.
+        node.scheduleBuffer(buffer, at: nil, options: loops ? .loops : [], completionCallbackType: isLast ? .dataPlayedBack : .dataConsumed) { [weak self] _ in
+            // After the last chunk, wait briefly so the varispeed unit's ~1 ms latency plays out
+            // instead of being cut off (which could click).
+            DispatchQueue.main.asyncAfter(deadline: .now() + (isLast ? 0.05 : 0)) {
+                MainActor.assumeIsolated {
+                    guard let self, self.generation == current else { return }
+                    if isLast { self.stop() } else { self.scheduleNextChunk(generation: current) }
+                }
+            }
+        }
     }
 
     private func prepare(_ format: AVAudioFormat) -> Bool {
@@ -167,8 +207,19 @@ final class Player {
         self.timer = timer
     }
 
+    /// Pulls rendered audio in offline mode. Only for tests.
+    func renderOffline(frames: AVAudioFrameCount) -> AVAudioPCMBuffer? {
+        guard isOffline,
+              let buffer = AVAudioPCMBuffer(pcmFormat: engine.manualRenderingFormat, frameCapacity: frames),
+              (try? engine.renderOffline(frames, to: buffer)) != nil
+        else { return nil }
+        return buffer
+    }
+
     func stop() {
         generation += 1
+        pendingChunks = []
+        streamClip = nil
         timer?.invalidate()
         timer = nil
         if isPlaying || node.isPlaying { _ = ObjCException.catching { node.stop() } }
