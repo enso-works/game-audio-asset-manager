@@ -259,6 +259,8 @@ final class Library {
         let removed: (String) -> Bool = { $0 == path || $0.hasPrefix(path + "/") }
         config.sounds = config.sounds.filter { !removed($0.key) }
         config.lastExport = config.lastExport?.filter { !removed($0.key) }
+        config.folderSettings = config.folderSettings.filter { !removed($0.key) }
+        config.spriteFolders = config.spriteFolders?.filter { !removed($0) }
         saveConfig()
     }
 
@@ -286,6 +288,11 @@ final class Library {
             }
         }
         config.folderSettings = settings
+        config.spriteFolders = config.spriteFolders?.map { key in
+            if key == oldPath { return newPath }
+            if key.hasPrefix(oldPath + "/") { return newPath + key.dropFirst(oldPath.count) }
+            return key
+        }
         saveConfig()
     }
 
@@ -321,6 +328,23 @@ final class Library {
             if let path = relativePath(url) { record[path] = settings }
         }
         config.lastExport = record
+        saveConfig()
+    }
+
+    func setExportOptions(_ options: ExportOptions) {
+        config.options = options
+        saveConfig()
+    }
+
+    func isSpriteFolder(_ url: URL) -> Bool {
+        relativePath(url).map { config.spriteFolders?.contains($0) ?? false } ?? false
+    }
+
+    func setSpriteFolder(_ url: URL, enabled: Bool) {
+        guard let path = relativePath(url), !path.isEmpty else { return }
+        var folders = Set(config.spriteFolders ?? [])
+        if enabled { folders.insert(path) } else { folders.remove(path) }
+        config.spriteFolders = folders.isEmpty ? nil : folders.sorted()
         saveConfig()
     }
 

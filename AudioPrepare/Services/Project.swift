@@ -34,6 +34,12 @@ struct ProjectConfig: Codable {
     var sounds: [String: SoundMeta] = [:]
     /// Settings each sound was last exported with, so format or loudness changes count as changed.
     var lastExport: [String: ExportSettings]?
+    /// Folders packed into one audio sprite file for the web (relative paths).
+    var spriteFolders: [String]?
+    /// Export options, stored per project so auto-export behaves like a manual export.
+    var options: ExportOptions?
+
+    var exportOptions: ExportOptions { options ?? ExportOptions() }
 
     static let folderName = ".audioprepare"
     static let fileName = "project.json"
@@ -66,6 +72,16 @@ struct ProjectConfig: Codable {
             path = (path as NSString).deletingLastPathComponent
         }
     }
+}
+
+struct ExportOptions: Codable, Equatable, Sendable {
+    var onlyChanged = true
+    var writeManifest = true
+    var writeCredits = true
+    var generateGodot = false
+    var generateTypeScript = false
+    /// Export the project automatically whenever a sound is saved.
+    var autoExport = false
 }
 
 extension JSONEncoder {

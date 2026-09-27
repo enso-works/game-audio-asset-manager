@@ -29,6 +29,17 @@ struct FolderView: View {
                     Spacer()
                     Button("Export Folder...", systemImage: "square.and.arrow.up") { navigation.exportProject(folder) }
                 }
+                if library.relativePath(folder) != "" {
+                    Toggle(isOn: Binding(get: { library.isSpriteFolder(folder) }, set: { library.setSpriteFolder(folder, enabled: $0) })) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Pack into one audio sprite (web)")
+                            Text("Exports this folder as \(Exporter.sanitize(folder.lastPathComponent)).\(library.settings(forFolder: folder).format.rawValue) plus a .sprite.json with offsets (Howler.js format), so the browser loads one file instead of many.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .toggleStyle(.switch)
+                }
             }
             if children.isEmpty {
                 ContentUnavailableView("Empty folder", systemImage: "folder", description: Text("Drag sounds here from the sidebar or Finder."))
