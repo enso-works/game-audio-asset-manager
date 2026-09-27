@@ -124,13 +124,14 @@ private struct InfoBar: View {
                     .help(error)
                     .onTapGesture { editor.player.clearOutputError() }
             }
-            Spacer(minLength: 8)
-            // Drops lengths first, then labels, when the pane is narrow.
-            ViewThatFits(in: .horizontal) {
-                positions(labels: true, lengths: true)
-                positions(labels: true, lengths: false)
-                positions(labels: false, lengths: false)
+            // Position read-outs change on every drag event and 30 times a second during playback.
+            // GeometryReader sizes itself from the proposal, not its content, so these updates never
+            // trigger a layout pass for the rest of the window.
+            GeometryReader { geometry in
+                positions(labels: geometry.size.width > 380, lengths: geometry.size.width > 560)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
+            .frame(height: 20)
             .font(.callout.monospacedDigit())
         }
     }
@@ -154,7 +155,7 @@ private struct InfoBar: View {
             }
         }
         .lineLimit(1)
-        .fixedSize()
+        .truncationMode(.head)
     }
 }
 
@@ -220,16 +221,13 @@ private struct EditBar: View {
         .disabled(editor.isBusy)
     }
 
-    /// A labeled row of buttons that falls back to icons only when the pane is too narrow.
+    /// A labeled row of buttons that wraps onto a second line when the pane is too narrow.
     private func row<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        let buttons = content()
-        return HStack(spacing: 8) {
-            Text(title).font(.caption.bold()).foregroundStyle(.secondary).frame(width: 52, alignment: .leading)
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) { buttons }.labelStyle(CompactLabelStyle())
-                HStack(spacing: 6) { buttons }.labelStyle(.iconOnly)
-            }
-            Spacer(minLength: 0)
+        HStack(alignment: .top, spacing: 8) {
+            Text(title).font(.caption.bold()).foregroundStyle(.secondary).frame(width: 52, height: 22, alignment: .leading)
+            FlowLayout(spacing: 8, lineSpacing: 6) { content() }
+                .labelStyle(CompactLabelStyle())
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -403,7 +401,7 @@ private struct RegionsPanel: View {
 
     private func row(_ region: Region) -> some View {
         let rate = editor.sampleRate
-        let selected = editor.selection == region.range
+        let selected = editor.selectedRegionID == region.id
         return HStack(spacing: 10) {
             Circle()
                 .fill(Color(nsColor: WaveformNSView.palette[region.colorIndex % WaveformNSView.palette.count]))

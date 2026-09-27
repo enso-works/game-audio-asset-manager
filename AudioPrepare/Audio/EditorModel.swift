@@ -45,7 +45,9 @@ final class EditorModel {
     private(set) var audioRevision = 0
     private(set) var savedRevision = 0
     private(set) var savedAudioRevision = 0
-    private(set) var regions: [Region] = []
+    private(set) var regions: [Region] = [] {
+        didSet { updateSelectionFlags() }
+    }
     /// Loop points in frames; exported as WAV loop markers and in the manifest.
     private(set) var loop: Range<Int>?
     private(set) var spectrogram: Spectrogram?
@@ -61,7 +63,13 @@ final class EditorModel {
     private(set) var viewLength: Double = 1
     private(set) var isLoading = false
     private(set) var isBusy = false
-    var selection: Range<Int>?
+    /// Changes on every mouse move while dragging; views that only care whether something is
+    /// selected read `hasSelection` / `selectedRegionID`, which change far less often.
+    var selection: Range<Int>? {
+        didSet { updateSelectionFlags() }
+    }
+    private(set) var hasSelection = false
+    private(set) var selectedRegionID: Region.ID?
     var cursor = 0
     var errorMessage: String?
     var loopPlayback = false
@@ -110,7 +118,12 @@ final class EditorModel {
     var audioDirty: Bool { audioRevision != savedAudioRevision }
     var frameCount: Int { clip?.frameCount ?? 0 }
     var sampleRate: Double { clip?.sampleRate ?? 44100 }
-    var hasSelection: Bool { selection.map { !$0.isEmpty } ?? false }
+    private func updateSelectionFlags() {
+        let has = selection.map { !$0.isEmpty } ?? false
+        if has != hasSelection { hasSelection = has }
+        let region = selection.flatMap { range in regions.first { $0.range == range }?.id }
+        if region != selectedRegionID { selectedRegionID = region }
+    }
 
     /// Target of processing ops: the selection, or the whole file when nothing is selected.
     var editRange: Range<Int> {
