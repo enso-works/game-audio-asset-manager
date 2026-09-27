@@ -8,6 +8,8 @@ final class Player {
     private(set) var position = 0
     /// Pitch of the current game-preview hit in semitones, nil during normal playback.
     private(set) var previewPitch: Double?
+    /// Set when the audio output can't be used (no device, device removed mid-play).
+    private(set) var outputError: String?
 
     @ObservationIgnored var onTick: ((Int) -> Void)?
     @ObservationIgnored private let engine = AVAudioEngine()
@@ -22,6 +24,33 @@ final class Player {
     init() {
         engine.attach(node)
         engine.attach(varispeed)
+        // Device changes (headphones unplugged, new output) stop the engine and invalidate the graph.
+        NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.resetAfterDeviceChange() }
+        }
+    }
+
+    private func resetAfterDeviceChange() {
+        stop()
+        connectedFormat = nil
+    }
+
+    /// Runs AVAudioEngine calls that may raise Objective-C exceptions; reports instead of crashing.
+    private func guarded(_ body: () -> Void) -> Bool {
+        if let reason = ObjCException.catching(body) {
+            outputError = "Audio output unavailable: \(reason)"
+            isPlaying = false
+            timer?.invalidate()
+            timer = nil
+            connectedFormat = nil
+            if engine.isRunning { engine.stop() }
+            return false
+        }
+        return true
+    }
+
+    func clearOutputError() {
+        outputError = nil
     }
 
     func play(_ clip: AudioClip, range: Range<Int>, loop: Bool, positionMap: ((Int) -> Int)? = nil) {
@@ -65,7 +94,7 @@ final class Player {
                 }
             }
         }
-        node.play()
+        guard guarded({ node.play() }) else { return }
         isPlaying = true
         position = map(0)
         startTimer()
@@ -73,16 +102,25 @@ final class Player {
 
     private func prepare(_ format: AVAudioFormat) -> Bool {
         if connectedFormat != format {
-            if engine.isRunning { engine.stop() }
-            engine.disconnectNodeOutput(node)
-            engine.disconnectNodeOutput(varispeed)
-            engine.connect(node, to: varispeed, format: format)
-            engine.connect(varispeed, to: engine.mainMixerNode, format: format)
+            let connected = guarded {
+                if engine.isRunning { engine.stop() }
+                engine.disconnectNodeOutput(node)
+                engine.disconnectNodeOutput(varispeed)
+                engine.connect(node, to: varispeed, format: format)
+                engine.connect(varispeed, to: engine.mainMixerNode, format: format)
+            }
+            guard connected else { return false }
             connectedFormat = format
         }
         if !engine.isRunning {
-            do { try engine.start() } catch { return false }
+            do {
+                try engine.start()
+            } catch {
+                outputError = "Audio output unavailable: \(error.localizedDescription)"
+                return false
+            }
         }
+        outputError = nil
         return true
     }
 
@@ -109,7 +147,7 @@ final class Player {
         varispeed.rate = Float(pow(2, pitch / 12))
         node.volume = Float(pow(10, -Double.random(in: 0...max(volumeJitterDb, 0)) / 20))
         previewPitch = pitch
-        node.stop()
+        guard guarded({ node.stop() }) else { return }
         node.scheduleBuffer(buffer, at: nil, options: [], completionCallbackType: .dataPlayedBack) { [weak self] _ in
             DispatchQueue.main.asyncAfter(deadline: .now() + gap) {
                 MainActor.assumeIsolated {
@@ -118,7 +156,7 @@ final class Player {
                 }
             }
         }
-        node.play()
+        _ = guarded { node.play() }
     }
 
     private func startTimer() {
@@ -133,7 +171,7 @@ final class Player {
         generation += 1
         timer?.invalidate()
         timer = nil
-        if isPlaying || node.isPlaying { node.stop() }
+        if isPlaying || node.isPlaying { _ = ObjCException.catching { node.stop() } }
         isPlaying = false
         previewPitch = nil
     }

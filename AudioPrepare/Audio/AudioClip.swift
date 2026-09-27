@@ -8,6 +8,7 @@ struct AudioClip: Sendable {
     var frameCount: Int { channels.first?.count ?? 0 }
     var channelCount: Int { channels.count }
     var duration: Double { Double(frameCount) / sampleRate }
+    var byteSize: Int { frameCount * channelCount * MemoryLayout<Float>.size }
 
     func frames(forMilliseconds ms: Int) -> Int {
         Int(Double(ms) / 1000 * sampleRate)

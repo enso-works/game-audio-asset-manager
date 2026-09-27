@@ -116,6 +116,14 @@ private struct InfoBar: View {
                     .background(.orange.opacity(0.2), in: Capsule())
             }
             if editor.isBusy { ProgressView().controlSize(.small) }
+            if let error = editor.player.outputError {
+                Label(error, systemImage: "speaker.slash.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .lineLimit(1)
+                    .help(error)
+                    .onTapGesture { editor.player.clearOutputError() }
+            }
             Spacer(minLength: 8)
             // Drops lengths first, then labels, when the pane is narrow.
             ViewThatFits(in: .horizontal) {

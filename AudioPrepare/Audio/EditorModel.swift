@@ -84,7 +84,13 @@ final class EditorModel {
 
     let player = Player()
     @ObservationIgnored var undoManager: UndoManager? {
-        didSet { undoManager?.levelsOfUndo = 30 }
+        didSet { updateUndoBudget() }
+    }
+
+    /// Each undo step keeps a full copy of the audio, so long files get fewer steps (about 1.5 GB total).
+    private func updateUndoBudget() {
+        let bytes = max(clip?.byteSize ?? 0, 1)
+        undoManager?.levelsOfUndo = min(30, max(5, 1_500_000_000 / bytes))
     }
     @ObservationIgnored weak var library: Library?
     @ObservationIgnored private var loadToken = UUID()
@@ -144,6 +150,7 @@ final class EditorModel {
             zoomToFit()
             invalidateSpectrogram()
             undoManager?.removeAllActions(withTarget: self)
+            updateUndoBudget()
         } catch {
             guard token == loadToken else { return }
             close()
@@ -323,7 +330,10 @@ final class EditorModel {
         audioRevision = snapshot.audioRevision
         version += 1
         if fit || wasFit { zoomToFit() } else { setView(start: viewStart, length: viewLength) }
-        if audioChanged { invalidateSpectrogram() }
+        if audioChanged {
+            invalidateSpectrogram()
+            updateUndoBudget()
+        }
     }
 
     // MARK: - Spectrogram
