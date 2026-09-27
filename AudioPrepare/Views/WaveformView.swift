@@ -1,27 +1,13 @@
 import AppKit
+import Observation
 import SwiftUI
 
-/// Values that affect drawing; passing them in makes SwiftUI redraw the NSView when they change.
-struct WaveformDrawState: Equatable {
-    var version: Int
-    var selection: Range<Int>?
-    var cursor: Int
-    var playhead: Int?
-    var viewStart: Double
-    var viewLength: Double
-    var regions: [Region]
-    var loop: Range<Int>?
-    var splitPreview: [Range<Int>]
-    var viewMode: WaveformViewMode
-    var tempo: TempoInfo?
-    var showBeatGrid: Bool
-    var spectrogramID: UUID?
-}
-
+/// Hosts the waveform NSView. It deliberately passes no drawing state through SwiftUI: every
+/// update of a representable makes SwiftUI re-measure it and relayout the window, which cost
+/// hundreds of milliseconds per mouse move. The NSView observes the model itself instead.
 struct WaveformView: NSViewRepresentable {
     let model: EditorModel
     let mode: WaveformNSView.Mode
-    let state: WaveformDrawState
 
     func makeNSView(context: Context) -> WaveformNSView {
         let view = WaveformNSView()
@@ -31,9 +17,7 @@ struct WaveformView: NSViewRepresentable {
     }
 
     func updateNSView(_ view: WaveformNSView, context: Context) {
-        view.model = model
-        view.needsDisplay = true
-        view.window?.invalidateCursorRects(for: view)
+        if view.model !== model { view.model = model }
     }
 }
 
@@ -41,7 +25,34 @@ final class WaveformNSView: NSView {
     enum Mode { case main, overview }
 
     var mode: Mode = .main
-    weak var model: EditorModel?
+    weak var model: EditorModel? {
+        didSet {
+            needsDisplay = true
+            overlay.needsDisplay = true
+        }
+    }
+
+    /// Transparent layer on top for selection, regions, loop, cursor and playhead. It redraws on
+    /// every drag or playback tick while this view (the waveform itself) only redraws when the
+    /// audio or the visible span changes; Core Animation composites the two.
+    private let overlay = WaveformOverlayView()
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.cornerRadius = 6
+        layer?.masksToBounds = true
+        overlay.owner = self
+        overlay.frame = bounds
+        overlay.autoresizingMask = [.width, .height]
+        addSubview(overlay)
+    }
+
+    override var isOpaque: Bool { true }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
 
     static let rulerHeight: CGFloat = 18
     static let regionStripHeight: CGFloat = 18
@@ -86,44 +97,92 @@ final class WaveformNSView: NSView {
 
     // MARK: - Drawing
 
+    /// Draws and records which model properties were read; any change to them schedules a redraw.
     override func draw(_ dirtyRect: NSRect) {
-        NSColor(white: 0.1, alpha: 1).setFill()
-        bounds.fill()
-        guard let model, let clip = model.clip, let context = NSGraphicsContext.current?.cgContext else { return }
-        let full = waveRect
+        withObservationTracking {
+            drawContents()
+        } onChange: { [weak self] in
+            DispatchQueue.main.async { self?.needsDisplay = true }
+        }
+    }
+
+    #if DEBUG_SNAPSHOT
+    static var drawCount = 0
+    #endif
+
+    /// What the base layer depends on.
+    private struct BaseKey: Equatable {
+        var start: Double
+        var length: Double
+        var display: WaveformViewMode
+        var tempo: TempoInfo?
+    }
+
+    private func drawContents() {
+        #if DEBUG_SNAPSHOT
+        Self.drawCount += 1
+        #endif
+        guard let model, let clip = model.clip, let context = NSGraphicsContext.current?.cgContext else {
+            NSColor(white: 0.1, alpha: 1).setFill()
+            bounds.fill()
+            return
+        }
+        _ = model.version
         let (start, length) = span(model)
         let display = mode == .main ? model.viewMode : .waveform
-        var wave = full
-        var spectrumRect: NSRect?
-        switch display {
-        case .waveform:
-            break
-        case .spectrogram:
-            spectrumRect = full
-        case .split:
-            wave = NSRect(x: full.minX, y: full.minY, width: full.width, height: floor(full.height / 2))
-            spectrumRect = NSRect(x: full.minX, y: wave.maxY + 1, width: full.width, height: full.height - wave.height - 1)
-        }
-        if let spectrumRect {
-            drawSpectrogram(model.spectrogram, in: spectrumRect, start: start, length: length, context: context)
-        }
+        let key = BaseKey(start: start, length: length, display: display, tempo: mode == .main && model.showBeatGrid ? model.tempo : nil)
+        if display != .waveform { _ = model.spectrogram?.id }
+        drawBase(model: model, clip: clip, key: key, full: waveRect, context: context)
+    }
 
-        if mode == .main {
-            NSColor(white: 0.15, alpha: 1).setFill()
-            NSRect(x: 0, y: 0, width: bounds.width, height: headerHeight).fill()
-        }
+    private func drawBase(model: EditorModel, clip: AudioClip, key: BaseKey, full: NSRect, context: CGContext) {
+            NSColor(white: 0.1, alpha: 1).setFill()
+            bounds.fill()
+            var wave = full
+            var spectrumRect: NSRect?
+            switch key.display {
+            case .waveform:
+                break
+            case .spectrogram:
+                spectrumRect = full
+            case .split:
+                wave = NSRect(x: full.minX, y: full.minY, width: full.width, height: floor(full.height / 2))
+                spectrumRect = NSRect(x: full.minX, y: wave.maxY + 1, width: full.width, height: full.height - wave.height - 1)
+            }
+            if let spectrumRect {
+                drawSpectrogram(model.spectrogram, in: spectrumRect, start: key.start, length: key.length, context: context)
+            }
+            if mode == .main {
+                NSColor(white: 0.15, alpha: 1).setFill()
+                NSRect(x: 0, y: 0, width: bounds.width, height: headerHeight).fill()
+            }
+            if key.display != .spectrogram {
+                NSColor(white: 1, alpha: 0.07).setFill()
+                NSRect(x: 0, y: wave.midY, width: bounds.width, height: 1).fill()
+                WaveformRenderer.draw(in: context, rect: wave, clip: clip, peaks: model.peaks, start: key.start, length: key.length)
+            }
+            if let spectrumRect { drawFrequencyLabels(in: spectrumRect, sampleRate: clip.sampleRate) }
+            if mode == .main {
+                drawRuler(clip: clip, start: key.start, length: key.length)
+                if let tempo = key.tempo { drawBeatGrid(tempo, in: full, sampleRate: clip.sampleRate) }
+            }
+    }
 
+    /// Cheap layers redrawn on every change: regions, selection, loop, cursor and playhead.
+    fileprivate func drawOverlays() {
+        guard let model, model.clip != nil else { return }
+        let full = waveRect
         for region in model.regions {
             let x0 = x(for: region.start)
             let x1 = x(for: region.end)
             guard x1 >= 0, x0 <= bounds.width else { continue }
             let color = Self.palette[region.colorIndex % Self.palette.count]
             color.withAlphaComponent(mode == .main ? 0.12 : 0.25).setFill()
-            NSRect(x: x0, y: full.minY, width: max(x1 - x0, 1), height: full.height).fill()
+            NSRect(x: x0, y: full.minY, width: max(x1 - x0, 1), height: full.height).fill(using: .sourceOver)
             if mode == .main {
                 let label = NSRect(x: x0, y: Self.rulerHeight, width: max(x1 - x0, 1), height: Self.regionStripHeight)
                 color.withAlphaComponent(0.7).setFill()
-                label.fill()
+                label.fill(using: .sourceOver)
                 NSGraphicsContext.saveGraphicsState()
                 NSBezierPath(rect: label).addClip()
                 (region.name as NSString).draw(
@@ -142,7 +201,7 @@ final class WaveformNSView: NSView {
                 let x1 = x(for: range.upperBound)
                 guard x1 >= 0, x0 <= bounds.width else { continue }
                 let box = NSRect(x: x0, y: full.minY + 1, width: max(x1 - x0, 1), height: full.height - 2)
-                box.fill()
+                box.fill(using: .sourceOver)
                 let path = NSBezierPath(rect: box)
                 path.setLineDash([4, 3], count: 2, phase: 0)
                 path.stroke()
@@ -153,7 +212,7 @@ final class WaveformNSView: NSView {
             let x0 = x(for: selection.lowerBound)
             let x1 = x(for: selection.upperBound)
             NSColor.controlAccentColor.withAlphaComponent(0.28).setFill()
-            NSRect(x: x0, y: full.minY, width: max(x1 - x0, 1), height: full.height).fill()
+            NSRect(x: x0, y: full.minY, width: max(x1 - x0, 1), height: full.height).fill(using: .sourceOver)
             if mode == .main {
                 NSColor.controlAccentColor.setFill()
                 NSRect(x: x0, y: full.minY, width: 1, height: full.height).fill()
@@ -161,27 +220,14 @@ final class WaveformNSView: NSView {
             }
         }
 
-        if display != .spectrogram {
-            NSColor(white: 1, alpha: 0.07).setFill()
-            NSRect(x: 0, y: wave.midY, width: bounds.width, height: 1).fill()
-            WaveformRenderer.draw(in: context, rect: wave, clip: clip, peaks: model.peaks, start: start, length: length)
-        }
-        if let spectrumRect { drawFrequencyLabels(in: spectrumRect, sampleRate: clip.sampleRate) }
-
-        if mode == .main {
-            drawRuler(clip: clip, start: start, length: length)
-        } else {
+        if mode == .overview {
             let x0 = x(for: Int(model.viewStart))
             let x1 = x(for: Int(model.viewStart + model.viewLength))
             let visible = NSRect(x: x0, y: 0.5, width: max(x1 - x0, 3), height: bounds.height - 1)
             NSColor(white: 1, alpha: 0.08).setFill()
-            visible.fill()
+            visible.fill(using: .sourceOver)
             NSColor(white: 1, alpha: 0.5).setStroke()
             NSBezierPath(rect: visible.insetBy(dx: 0.5, dy: 0)).stroke()
-        }
-
-        if mode == .main, model.showBeatGrid, let tempo = model.tempo {
-            drawBeatGrid(tempo, in: full, sampleRate: clip.sampleRate)
         }
 
         if let loop = model.loop {
@@ -189,7 +235,7 @@ final class WaveformNSView: NSView {
         }
 
         NSColor.systemYellow.withAlphaComponent(0.85).setFill()
-        NSRect(x: x(for: model.cursor), y: 0, width: 1, height: bounds.height).fill()
+        NSRect(x: x(for: model.cursor), y: 0, width: 1, height: bounds.height).fill(using: .sourceOver)
 
         if model.player.isPlaying {
             NSColor.systemRed.setFill()
@@ -458,5 +504,26 @@ final class WaveformNSView: NSView {
         guard let model, model.clip != nil, mode == .main else { return }
         let point = convert(event.locationInWindow, from: nil)
         model.zoom(by: 1 + event.magnification, around: Double(frame(atX: point.x)))
+    }
+}
+
+/// Draws the fast-changing overlay for its owner; mouse events pass through to the owner.
+final class WaveformOverlayView: NSView {
+    weak var owner: WaveformNSView?
+
+    override var isFlipped: Bool { true }
+    override var isOpaque: Bool { false }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        withObservationTracking {
+            owner?.drawOverlays()
+        } onChange: { [weak self] in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.needsDisplay = true
+                if let owner = self.owner { owner.window?.invalidateCursorRects(for: owner) }
+            }
+        }
     }
 }

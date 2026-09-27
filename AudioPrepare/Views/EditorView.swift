@@ -185,28 +185,11 @@ private struct WaveformPanel: View {
     @Environment(EditorModel.self) private var editor
 
     var body: some View {
-        let state = WaveformDrawState(
-            version: editor.version,
-            selection: editor.selection,
-            cursor: editor.cursor,
-            playhead: editor.player.isPlaying ? editor.player.position : nil,
-            viewStart: editor.viewStart,
-            viewLength: editor.viewLength,
-            regions: editor.regions,
-            loop: editor.loop,
-            splitPreview: editor.splitPreview,
-            viewMode: editor.viewMode,
-            tempo: editor.tempo,
-            showBeatGrid: editor.showBeatGrid,
-            spectrogramID: editor.spectrogram?.id
-        )
         VStack(spacing: 6) {
-            WaveformView(model: editor, mode: .overview, state: state)
+            WaveformView(model: editor, mode: .overview)
                 .frame(height: 44)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-            WaveformView(model: editor, mode: .main, state: state)
+            WaveformView(model: editor, mode: .main)
                 .frame(minHeight: 220)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
         }
     }
 }
