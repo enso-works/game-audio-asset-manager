@@ -128,6 +128,7 @@ private struct SidebarView: View {
     @Environment(DownloadQueue.self) private var queue
     @Environment(EditorModel.self) private var editor
     @Environment(Navigation.self) private var navigation
+    @Environment(ExportService.self) private var exportService
     @Binding var selection: SidebarItem?
     var switchProject: (String) -> Void
 
@@ -242,6 +243,36 @@ private struct SidebarView: View {
     }
 
     private var bottomBar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            exportStatus
+            bottomButtons
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder private var exportStatus: some View {
+        if exportService.isRunning {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini)
+                Text("Exporting \(exportService.progress.done)/\(exportService.progress.total)...")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        } else if let date = exportService.lastExportDate, let report = exportService.lastReport {
+            Label(report.failures.isEmpty ? "Exported \(date.formatted(date: .omitted, time: .shortened))" : "\(report.failures.count) export errors",
+                  systemImage: report.failures.isEmpty ? "checkmark.circle" : "exclamationmark.triangle")
+                .font(.caption)
+                .foregroundStyle(report.failures.isEmpty ? Color.secondary : Color.orange)
+                .help(report.failures.map { "\($0.file): \($0.message)" }.joined(separator: "\n"))
+        } else if library.config.exportOptions.autoExport {
+            Label("Auto-export on", systemImage: "arrow.triangle.2.circlepath")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var bottomButtons: some View {
         HStack(spacing: 12) {
             Button("New Folder", systemImage: "folder.badge.plus") { newFolder(in: targetFolder(allowInbox: false)) }
                 .help("New folder")
@@ -253,8 +284,6 @@ private struct SidebarView: View {
         }
         .labelStyle(.iconOnly)
         .buttonStyle(.borderless)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
     }
 
     /// Folder for new items: the selected folder, the selected file's folder, or the project root.

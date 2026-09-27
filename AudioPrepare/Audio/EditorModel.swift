@@ -93,6 +93,7 @@ final class EditorModel {
         undoManager?.levelsOfUndo = min(30, max(5, 1_500_000_000 / bytes))
     }
     @ObservationIgnored weak var library: Library?
+    @ObservationIgnored weak var exportService: ExportService?
     @ObservationIgnored private var loadToken = UUID()
     @ObservationIgnored private var regionCounter = 0
     @ObservationIgnored private var revisionCounter = 0
@@ -212,6 +213,7 @@ final class EditorModel {
         if !audioDirty {
             persistMeta(for: url)
             markSaved()
+            exportService?.autoExportIfEnabled()
             return .saved(url)
         }
         guard url.pathExtension.lowercased() == "wav", !library.isInInbox(url) else { return .needsSaveAs }
@@ -220,6 +222,7 @@ final class EditorModel {
             persistMeta(for: url)
             markSaved()
             library.refresh()
+            exportService?.autoExportIfEnabled()
             return .saved(url)
         } catch {
             errorMessage = "Save failed: \(error.localizedDescription)"
@@ -250,6 +253,7 @@ final class EditorModel {
         self.url = destination
         markSaved()
         library.refresh()
+        exportService?.autoExportIfEnabled()
         return destination
     }
 
@@ -270,6 +274,7 @@ final class EditorModel {
             }
         }
         library.refresh()
+        exportService?.autoExportIfEnabled()
         return results
     }
 
@@ -776,6 +781,7 @@ final class EditorModel {
             results.append(destination)
         }
         library.refresh()
+        exportService?.autoExportIfEnabled()
         return results
     }
 

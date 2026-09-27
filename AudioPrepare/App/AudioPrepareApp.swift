@@ -6,6 +6,7 @@ struct AudioPrepareApp: App {
     @State private var downloads = DownloadQueue()
     @State private var editor = EditorModel()
     @State private var navigation = Navigation()
+    @State private var exportService = ExportService()
 
     var body: some Scene {
         Window("Audio Prepare", id: "main") {
@@ -14,10 +15,13 @@ struct AudioPrepareApp: App {
                 .environment(downloads)
                 .environment(editor)
                 .environment(navigation)
+                .environment(exportService)
                 .frame(minWidth: 1100, minHeight: 680)
                 .onAppear {
                     downloads.library = library
                     editor.library = library
+                    editor.exportService = exportService
+                    exportService.library = library
                     library.onMove = { old, new in
                         editor.fileMoved(from: old, to: new)
                         if navigation.selection == .file(old) { navigation.selection = .file(new) }
