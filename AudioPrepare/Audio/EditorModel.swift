@@ -1,6 +1,27 @@
 import AppKit
 import Observation
 
+enum WaveformViewMode: String, CaseIterable, Identifiable {
+    case waveform, spectrogram, split
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .waveform: "Waveform"
+        case .spectrogram: "Spectrogram"
+        case .split: "Both"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .waveform: "waveform"
+        case .spectrogram: "chart.bar.doc.horizontal"
+        case .split: "rectangle.split.1x2"
+        }
+    }
+}
+
 struct Region: Identifiable, Equatable, Codable {
     let id: UUID
     var name: String
@@ -27,6 +48,8 @@ final class EditorModel {
     private(set) var regions: [Region] = []
     /// Loop points in frames; exported as WAV loop markers and in the manifest.
     private(set) var loop: Range<Int>?
+    private(set) var spectrogram: Spectrogram?
+    private(set) var viewMode = WaveformViewMode(rawValue: UserDefaults.standard.string(forKey: "viewMode") ?? "") ?? .waveform
     /// Sounds found by auto-split, shown on the waveform before they become regions.
     var splitPreview: [Range<Int>] = []
     /// Where the sound came from (YouTube link, title, channel), shown for attribution.
@@ -64,6 +87,8 @@ final class EditorModel {
     @ObservationIgnored private var regionCounter = 0
     @ObservationIgnored private var revisionCounter = 0
     @ObservationIgnored private var loopDragStart: Snapshot?
+    @ObservationIgnored private var spectrogramStale = true
+    @ObservationIgnored private var spectrogramToken = UUID()
 
     init() {
         player.onTick = { [weak self] position in self?.follow(position) }
@@ -112,6 +137,7 @@ final class EditorModel {
             }
             markSaved()
             zoomToFit()
+            invalidateSpectrogram()
             undoManager?.removeAllActions(withTarget: self)
         } catch {
             guard token == loadToken else { return }
@@ -276,6 +302,7 @@ final class EditorModel {
 
     private func apply(_ snapshot: Snapshot, fit: Bool = false) {
         let wasFit = viewLength >= Double(frameCount) - 1
+        let audioChanged = snapshot.audioRevision != audioRevision
         clip = snapshot.clip
         peaks = snapshot.peaks
         regions = snapshot.regions
@@ -286,6 +313,39 @@ final class EditorModel {
         audioRevision = snapshot.audioRevision
         version += 1
         if fit || wasFit { zoomToFit() } else { setView(start: viewStart, length: viewLength) }
+        if audioChanged { invalidateSpectrogram() }
+    }
+
+    // MARK: - Spectrogram
+
+    func setViewMode(_ mode: WaveformViewMode) {
+        viewMode = mode
+        UserDefaults.standard.set(mode.rawValue, forKey: "viewMode")
+        refreshSpectrogramIfNeeded()
+    }
+
+    func cycleViewMode() {
+        let all = WaveformViewMode.allCases
+        setViewMode(all[(all.firstIndex(of: viewMode)! + 1) % all.count])
+    }
+
+    private func invalidateSpectrogram() {
+        spectrogramStale = true
+        spectrogram = nil
+        refreshSpectrogramIfNeeded()
+    }
+
+    /// Computes the spectrogram in the background, only while it is shown.
+    private func refreshSpectrogramIfNeeded() {
+        guard viewMode != .waveform, spectrogramStale, let clip else { return }
+        spectrogramStale = false
+        let token = UUID()
+        spectrogramToken = token
+        Task {
+            let result = await Task.detached(priority: .utility) { Spectrogram(clip: clip) }.value
+            guard spectrogramToken == token else { return }
+            spectrogram = result
+        }
     }
 
     private func registerUndo(restoring snapshot: Snapshot, name: String) {

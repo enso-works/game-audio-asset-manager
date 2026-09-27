@@ -12,6 +12,8 @@ struct WaveformDrawState: Equatable {
     var regions: [Region]
     var loop: Range<Int>?
     var splitPreview: [Range<Int>]
+    var viewMode: WaveformViewMode
+    var spectrogramID: UUID?
 }
 
 struct WaveformView: NSViewRepresentable {
@@ -51,6 +53,7 @@ final class WaveformNSView: NSView {
     }
 
     private var dragState = DragState.none
+    private var spectrogramCache: (key: String, image: CGImage)?
     private var dragMoved = false
     private var downPoint = NSPoint.zero
 
@@ -85,8 +88,23 @@ final class WaveformNSView: NSView {
         NSColor(white: 0.1, alpha: 1).setFill()
         bounds.fill()
         guard let model, let clip = model.clip, let context = NSGraphicsContext.current?.cgContext else { return }
-        let wave = waveRect
+        let full = waveRect
         let (start, length) = span(model)
+        let display = mode == .main ? model.viewMode : .waveform
+        var wave = full
+        var spectrumRect: NSRect?
+        switch display {
+        case .waveform:
+            break
+        case .spectrogram:
+            spectrumRect = full
+        case .split:
+            wave = NSRect(x: full.minX, y: full.minY, width: full.width, height: floor(full.height / 2))
+            spectrumRect = NSRect(x: full.minX, y: wave.maxY + 1, width: full.width, height: full.height - wave.height - 1)
+        }
+        if let spectrumRect {
+            drawSpectrogram(model.spectrogram, in: spectrumRect, start: start, length: length, context: context)
+        }
 
         if mode == .main {
             NSColor(white: 0.15, alpha: 1).setFill()
@@ -99,7 +117,7 @@ final class WaveformNSView: NSView {
             guard x1 >= 0, x0 <= bounds.width else { continue }
             let color = Self.palette[region.colorIndex % Self.palette.count]
             color.withAlphaComponent(mode == .main ? 0.12 : 0.25).setFill()
-            NSRect(x: x0, y: wave.minY, width: max(x1 - x0, 1), height: wave.height).fill()
+            NSRect(x: x0, y: full.minY, width: max(x1 - x0, 1), height: full.height).fill()
             if mode == .main {
                 let label = NSRect(x: x0, y: Self.rulerHeight, width: max(x1 - x0, 1), height: Self.regionStripHeight)
                 color.withAlphaComponent(0.7).setFill()
@@ -121,7 +139,7 @@ final class WaveformNSView: NSView {
                 let x0 = x(for: range.lowerBound)
                 let x1 = x(for: range.upperBound)
                 guard x1 >= 0, x0 <= bounds.width else { continue }
-                let box = NSRect(x: x0, y: wave.minY + 1, width: max(x1 - x0, 1), height: wave.height - 2)
+                let box = NSRect(x: x0, y: full.minY + 1, width: max(x1 - x0, 1), height: full.height - 2)
                 box.fill()
                 let path = NSBezierPath(rect: box)
                 path.setLineDash([4, 3], count: 2, phase: 0)
@@ -133,17 +151,20 @@ final class WaveformNSView: NSView {
             let x0 = x(for: selection.lowerBound)
             let x1 = x(for: selection.upperBound)
             NSColor.controlAccentColor.withAlphaComponent(0.28).setFill()
-            NSRect(x: x0, y: wave.minY, width: max(x1 - x0, 1), height: wave.height).fill()
+            NSRect(x: x0, y: full.minY, width: max(x1 - x0, 1), height: full.height).fill()
             if mode == .main {
                 NSColor.controlAccentColor.setFill()
-                NSRect(x: x0, y: wave.minY, width: 1, height: wave.height).fill()
-                NSRect(x: x1 - 1, y: wave.minY, width: 1, height: wave.height).fill()
+                NSRect(x: x0, y: full.minY, width: 1, height: full.height).fill()
+                NSRect(x: x1 - 1, y: full.minY, width: 1, height: full.height).fill()
             }
         }
 
-        NSColor(white: 1, alpha: 0.07).setFill()
-        NSRect(x: 0, y: wave.midY, width: bounds.width, height: 1).fill()
-        WaveformRenderer.draw(in: context, rect: wave, clip: clip, peaks: model.peaks, start: start, length: length)
+        if display != .spectrogram {
+            NSColor(white: 1, alpha: 0.07).setFill()
+            NSRect(x: 0, y: wave.midY, width: bounds.width, height: 1).fill()
+            WaveformRenderer.draw(in: context, rect: wave, clip: clip, peaks: model.peaks, start: start, length: length)
+        }
+        if let spectrumRect { drawFrequencyLabels(in: spectrumRect, sampleRate: clip.sampleRate) }
 
         if mode == .main {
             drawRuler(clip: clip, start: start, length: length)
@@ -158,7 +179,7 @@ final class WaveformNSView: NSView {
         }
 
         if let loop = model.loop {
-            drawLoop(loop, wave: wave)
+            drawLoop(loop, wave: full)
         }
 
         NSColor.systemYellow.withAlphaComponent(0.85).setFill()
@@ -167,6 +188,50 @@ final class WaveformNSView: NSView {
         if model.player.isPlaying {
             NSColor.systemRed.setFill()
             NSRect(x: x(for: model.player.position), y: 0, width: 1.5, height: bounds.height).fill()
+        }
+    }
+
+    private func drawSpectrogram(_ spectrogram: Spectrogram?, in rect: NSRect, start: Double, length: Double, context: CGContext) {
+        guard let spectrogram else {
+            ("Computing spectrogram..." as NSString).draw(
+                at: NSPoint(x: rect.minX + 8, y: rect.midY - 7),
+                withAttributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor]
+            )
+            return
+        }
+        let width = Int(rect.width)
+        let height = Int(rect.height)
+        let key = "\(spectrogram.id)-\(start)-\(length)-\(width)-\(height)"
+        let image: CGImage
+        if let cache = spectrogramCache, cache.key == key {
+            image = cache.image
+        } else if let rendered = spectrogram.image(start: start, length: length, width: width, height: height) {
+            spectrogramCache = (key, rendered)
+            image = rendered
+        } else {
+            return
+        }
+        // Flipped view: draw the image upright.
+        context.saveGState()
+        context.translateBy(x: rect.minX, y: rect.maxY)
+        context.scaleBy(x: 1, y: -1)
+        context.draw(image, in: CGRect(x: 0, y: 0, width: rect.width, height: rect.height))
+        context.restoreGState()
+    }
+
+    private func drawFrequencyLabels(in rect: NSRect, sampleRate: Double) {
+        let minHz = 30.0
+        let maxHz = sampleRate / 2
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium),
+            .foregroundColor: NSColor(white: 1, alpha: 0.75),
+        ]
+        for (hz, label) in [(100.0, "100"), (1000, "1k"), (5000, "5k"), (10000, "10k")] where hz < maxHz {
+            let t = log(hz / minHz) / log(maxHz / minHz)
+            let y = rect.maxY - CGFloat(t) * rect.height
+            NSColor(white: 1, alpha: 0.18).setFill()
+            NSRect(x: rect.minX, y: y, width: 6, height: 1).fill()
+            (label as NSString).draw(at: NSPoint(x: rect.minX + 8, y: y - 6), withAttributes: attributes)
         }
     }
 

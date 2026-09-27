@@ -75,6 +75,14 @@ private struct EditorToolbar: ToolbarContent {
             }
             .help("Loop playback (L)")
 
+            Picker("View", selection: Binding(get: { editor.viewMode }, set: { editor.setViewMode($0) })) {
+                ForEach(WaveformViewMode.allCases) { mode in
+                    Label(mode.title, systemImage: mode.icon).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .help("Waveform, spectrogram or both (W)")
+
             Button("Zoom Out", systemImage: "minus.magnifyingglass") { editor.zoomOut() }
                 .help("Zoom out (Cmd -)")
             Button("Zoom In", systemImage: "plus.magnifyingglass") { editor.zoomIn() }
@@ -178,7 +186,9 @@ private struct WaveformPanel: View {
             viewLength: editor.viewLength,
             regions: editor.regions,
             loop: editor.loop,
-            splitPreview: editor.splitPreview
+            splitPreview: editor.splitPreview,
+            viewMode: editor.viewMode,
+            spectrogramID: editor.spectrogram?.id
         )
         VStack(spacing: 6) {
             WaveformView(model: editor, mode: .overview, state: state)

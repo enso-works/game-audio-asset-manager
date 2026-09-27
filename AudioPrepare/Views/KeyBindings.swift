@@ -100,6 +100,7 @@ enum KeyCommands {
         // Game & view
         bind(char("g"), [], "G", "Game preview (random pitch)", "Game & View") { $0.playGamePreview() },
         bind(char("g"), [.shift], "Shift G", "Pitch variations...", "Game & View") { $0.showVariations = true },
+        bind(char("w"), [], "W", "Waveform / spectrogram / both", "Game & View") { $0.cycleViewMode() },
         bind([], [.command], "Cmd = - 0", "Zoom in / out / fit", "Game & View", nil),
         bind(char("/") + char("?"), [.shift], "?", "Show keyboard shortcuts", "Game & View") { $0.showShortcuts = true },
         bind([], [.command], "Cmd E", "Export (Shift Cmd E: project)", "Game & View", nil),
