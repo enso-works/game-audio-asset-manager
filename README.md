@@ -41,6 +41,9 @@ Workflow: download into the Inbox, open a sound, cut it, then **Save As** (Shift
 - **Auto-Split** (Regions panel): finds every sound in a pack by silence. Adjust threshold, minimum gap, minimum length and padding while the matches are outlined on the waveform, then create regions in one click.
 - **Game**: **Preview** plays the sound 6 times with random pitch and volume, like a game would. **Variations** saves pitched copies (`jump_01` ... `jump_05`, evenly spread over ±N semitones) so the game can pick one at random. Pitch changes speed too, like Godot's `pitch_scale` and three.js `playbackRate`, unless you tick "Keep original length".
 
+- **View** (W): waveform, spectrogram (log frequency, 30 Hz to Nyquist), or both stacked. The spectrogram helps spot hum, hiss and where a sound really starts.
+- **Clipboard**: Cmd C / Cmd X / Cmd V copy, cut and paste audio, also between files (rate and channels are converted).
+
 Processing applies to the selection, or to the whole sound when nothing is selected.
 
 ## Export
@@ -64,6 +67,7 @@ Select the part that should repeat and press **K** (Set Loop). Then:
 - **Snap** moves loop points to zero crossings to avoid clicks.
 - **Seamless** crossfades the loop's end into its start and trims the file to the loop.
 - Drag the green handles in the time ruler to adjust.
+- **Tempo** (Loop row): detects BPM and the downbeat, draws a beat grid with bar numbers, and sets or snaps the loop to a whole number of bars so music loops stay in time. BPM is saved with the sound and written to the manifest.
 
 In the game:
 
@@ -96,23 +100,29 @@ If downloads start failing, update yt-dlp: `brew upgrade yt-dlp`.
 
 ## Shortcuts
 
+Press **?** in the editor (or Help > Keyboard Shortcuts, Cmd /) for the full list. Highlights:
+
 | Key | Action |
 | --- | --- |
-| Space | Play / stop (plays the selection if there is one) |
-| Delete | Delete selection |
-| T / Cmd T | Trim to selection |
-| R | Add region from selection |
-| K | Set loop from selection |
-| P / Shift P | Play loop / play intro then loop |
-| I / O | Fade in / fade out |
-| N | Normalize |
-| L | Toggle loop playback of the selection |
+| Space | Play / stop |
+| C or Delete | Cut the selection out |
+| T / Shift T | Trim to selection / trim silence |
+| S | Silence selection |
+| Cmd C / X / V | Copy / cut / paste audio |
+| [ / ] | Selection start / end at the playhead (works while playing) |
+| ← → (Shift) | Move cursor 100 ms (1 s) |
+| , / . | Previous / next region |
+| I / O / N | Fade in / fade out / normalize |
+| = / - | Louder / quieter |
+| V / B / H | Reverse / low cut / high cut |
+| R / Shift R | Add region / auto-split |
+| K / Shift K | Set / clear loop |
+| P / Shift P | Play loop / intro then loop |
+| J / Z / M | Hear seam / snap to zero / make seamless |
+| G / Shift G | Game preview / variations |
+| W | Waveform, spectrogram, both |
+| L | Loop playback |
 | Esc | Stop, then clear selection |
-| Return | Cursor to start |
-| Cmd A | Select all |
-| Cmd = / Cmd - / Cmd 0 | Zoom in / out / fit |
-| Cmd Z / Shift Cmd Z | Undo / redo |
-| Cmd S / Shift Cmd S | Save / Save As into a project folder |
-| Cmd E / Shift Cmd E | Export sound / export project |
+| Cmd Z / Cmd S / Cmd E | Undo / save / export |
 
 Mouse: drag to select, drag selection edges to adjust, shift-click to extend, double-click a region to select it, scroll vertically to zoom, horizontally to pan, pinch to zoom.
