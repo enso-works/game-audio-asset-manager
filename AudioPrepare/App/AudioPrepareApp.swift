@@ -51,6 +51,9 @@ struct AudioPrepareApp: App {
                 Button("Export...") { editor.showExport = true }
                     .keyboardShortcut("e")
                     .disabled(editor.clip == nil)
+
+                Button("Export Project...") { navigation.exportProject() }
+                    .keyboardShortcut("e", modifiers: [.command, .shift])
             }
             CommandMenu("Audio") {
                 Button("Play / Stop") { editor.togglePlay() }

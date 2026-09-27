@@ -54,9 +54,14 @@ struct ContentView: View {
                     .task(id: url) { await editor.open(url) }
             case .folder(let url):
                 FolderView(folder: url)
-            case .downloader, .batch, .none:
+            case .batch:
+                BatchConvertView()
+            case .downloader, .none:
                 DownloaderView { select(.file($0)) }
             }
+        }
+        .sheet(isPresented: $navigation.showProjectExport) {
+            ProjectExportView(scope: navigation.exportScope)
         }
         .alert("Unsaved edits", isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } })) {
             Button("Save") {
@@ -136,6 +141,8 @@ private struct SidebarView: View {
                 Label("YouTube to MP3", systemImage: "arrow.down.circle")
                     .badge(queue.pendingCount)
                     .tag(SidebarItem.downloader)
+                Label("Batch Convert", systemImage: "arrow.triangle.2.circlepath")
+                    .tag(SidebarItem.batch)
             }
             Section(library.currentProject) {
                 OutlineGroup(library.tree, children: \.children) { node in
@@ -183,6 +190,9 @@ private struct SidebarView: View {
         let isInbox = node.url.standardizedFileURL == library.inboxURL.standardizedFileURL
         if node.isFolder {
             Button("New Folder Inside...") { newFolder(in: node.url) }
+            if !isInbox {
+                Button("Export Folder...") { navigation.exportProject(node.url) }
+            }
         }
         Button("Show in Finder") { library.reveal([node.url]) }
         if !isInbox {
@@ -238,6 +248,8 @@ private struct SidebarView: View {
             Button("Import Audio", systemImage: "square.and.arrow.down") { importing = true }
                 .help("Import audio files (or drag them onto the sidebar or a folder)")
             Spacer()
+            Button("Export Project", systemImage: "square.and.arrow.up.on.square") { navigation.exportProject() }
+                .help("Export every sound in the project to the game folder (Shift Cmd E)")
         }
         .labelStyle(.iconOnly)
         .buttonStyle(.borderless)

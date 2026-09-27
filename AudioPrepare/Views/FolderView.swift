@@ -23,6 +23,12 @@ struct FolderView: View {
             } else {
                 Text("Sounds in this folder export to the same folder path inside the game's export folder.")
                     .foregroundStyle(.secondary)
+                HStack {
+                    Text("Export format").fontWeight(.medium)
+                    FolderSettingsControl(folder: folder)
+                    Spacer()
+                    Button("Export Folder...", systemImage: "square.and.arrow.up") { navigation.exportProject(folder) }
+                }
             }
             if children.isEmpty {
                 ContentUnavailableView("Empty folder", systemImage: "folder", description: Text("Drag sounds here from the sidebar or Finder."))
