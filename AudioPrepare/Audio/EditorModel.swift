@@ -27,6 +27,8 @@ final class EditorModel {
     private(set) var regions: [Region] = []
     /// Loop points in frames; exported as WAV loop markers and in the manifest.
     private(set) var loop: Range<Int>?
+    /// Where the sound came from (YouTube link, title, channel), shown for attribution.
+    private(set) var source: SoundMeta?
     private(set) var viewStart: Double = 0
     private(set) var viewLength: Double = 1
     private(set) var isLoading = false
@@ -89,6 +91,7 @@ final class EditorModel {
             selection = nil
             cursor = 0
             let meta = library?.meta(for: url) ?? SoundMeta()
+            source = meta.hasSource ? meta.sourceOnly : nil
             regions = (meta.regions ?? []).filter { $0.end <= clip.frameCount && $0.start < $0.end }
             regionCounter = regions.count
             loop = meta.loop.flatMap { points in
@@ -114,6 +117,7 @@ final class EditorModel {
         peaks = Peaks()
         regions = []
         loop = nil
+        source = nil
         selection = nil
         markSaved()
         version += 1

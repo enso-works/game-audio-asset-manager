@@ -14,6 +14,7 @@ struct EditorView: View {
             } else if editor.clip != nil {
                 VStack(alignment: .leading, spacing: 10) {
                     InfoBar()
+                    if let source = editor.source { SourceLine(source: source) }
                     WaveformPanel()
                     EditBar()
                     RegionsPanel()
@@ -177,6 +178,29 @@ private struct InfoBar: View {
         }
         .lineLimit(1)
         .fixedSize()
+    }
+}
+
+private struct SourceLine: View {
+    let source: SoundMeta
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "link").foregroundStyle(.secondary)
+            Text(description).lineLimit(1).truncationMode(.tail)
+            if let link = source.sourceURL.flatMap(URL.init(string:)) {
+                Link("Open", destination: link)
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+
+    private var description: String {
+        var text = "Source: \"\(source.sourceTitle ?? source.sourceURL ?? "")\""
+        if let channel = source.sourceChannel { text += " by \(channel)" }
+        if let range = source.sourceRange { text += " (\(range))" }
+        return text
     }
 }
 
