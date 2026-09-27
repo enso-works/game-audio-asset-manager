@@ -65,3 +65,34 @@ final class ExportTests: XCTestCase {
         }
     }
 }
+
+final class HardeningTests: XCTestCase {
+    func testCorruptProjectFileIsBackedUp() throws {
+        let project = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: project) }
+        let file = ProjectConfig.url(for: project)
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("{ not json".utf8).write(to: file)
+        guard case .corrupt(let backup) = ProjectConfig.read(from: project) else { return XCTFail("expected corrupt") }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: backup.path))
+        XCTAssertEqual(try String(contentsOf: backup, encoding: .utf8), "{ not json")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+    }
+
+    func testProjectConfigRoundTrip() throws {
+        let project = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: project) }
+        var config = ProjectConfig()
+        config.spriteFolders = ["sfx/ui"]
+        config.sounds["a.wav"] = SoundMeta(loop: LoopPoints(start: 1, end: 2), tempo: TempoInfo(bpm: 90, offset: 0.1, beatsPerBar: 3))
+        XCTAssertNil(config.save(to: project))
+        guard case .loaded(let loaded) = ProjectConfig.read(from: project) else { return XCTFail("expected loaded") }
+        XCTAssertEqual(loaded.spriteFolders, ["sfx/ui"])
+        XCTAssertEqual(loaded.sounds["a.wav"]?.tempo?.bpm, 90)
+    }
+
+    func testMemoryLimitIsReasonable() {
+        XCTAssertGreaterThan(AudioDecoder.memoryLimit, 500 << 20)
+        XCTAssertLessThanOrEqual(AudioDecoder.memoryLimit, 3 << 30)
+    }
+}

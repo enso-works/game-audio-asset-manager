@@ -16,6 +16,8 @@ final class Library {
     private(set) var currentProject: String
     private(set) var config = ProjectConfig()
     private(set) var tree: [LibraryNode] = []
+    /// The last file operation that failed, shown to the user as an alert.
+    var lastError: String?
     /// Called after files move or get renamed, so open editors can follow them.
     @ObservationIgnored var onMove: ((URL, URL) -> Void)?
 
@@ -98,7 +100,15 @@ final class Library {
     private func openCurrentProject() {
         UserDefaults.standard.set(currentProject, forKey: "currentProject")
         try? FileManager.default.createDirectory(at: inboxURL, withIntermediateDirectories: true)
-        config = ProjectConfig.load(from: projectURL)
+        switch ProjectConfig.read(from: projectURL) {
+        case .loaded(let loaded):
+            config = loaded
+        case .missing:
+            config = ProjectConfig()
+        case .corrupt(let backup):
+            config = ProjectConfig()
+            lastError = "The settings of \"\(currentProject)\" couldn't be read, so defaults are used. The unreadable file was kept as \(backup.lastPathComponent)."
+        }
         refresh()
     }
 
@@ -354,7 +364,9 @@ final class Library {
     }
 
     private func saveConfig() {
-        config.save(to: projectURL)
+        if let error = config.save(to: projectURL) {
+            lastError = "Couldn't save project settings: \(error.localizedDescription)"
+        }
     }
 
     // MARK: - File operations
@@ -364,9 +376,16 @@ final class Library {
         let name = Self.cleanName(rawName)
         guard !name.isEmpty else { return nil }
         let url = parent.appendingPathComponent(name, isDirectory: true)
-        guard !FileManager.default.fileExists(atPath: url.path),
-              (try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)) != nil
-        else { return nil }
+        guard !FileManager.default.fileExists(atPath: url.path) else {
+            lastError = "A folder named \"\(name)\" already exists."
+            return nil
+        }
+        do {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        } catch {
+            lastError = "Couldn't create \"\(name)\": \(error.localizedDescription)"
+            return nil
+        }
         refresh()
         return url
     }
@@ -377,9 +396,17 @@ final class Library {
         guard !name.isEmpty else { return nil }
         let isFolder = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
         let destination = url.deletingLastPathComponent().appendingPathComponent(isFolder ? name : name + "." + url.pathExtension)
-        guard destination != url, !FileManager.default.fileExists(atPath: destination.path),
-              (try? FileManager.default.moveItem(at: url, to: destination)) != nil
-        else { return nil }
+        guard destination != url else { return nil }
+        guard !FileManager.default.fileExists(atPath: destination.path) else {
+            lastError = "\"\(destination.lastPathComponent)\" already exists."
+            return nil
+        }
+        do {
+            try FileManager.default.moveItem(at: url, to: destination)
+        } catch {
+            lastError = "Couldn't rename \"\(url.lastPathComponent)\": \(error.localizedDescription)"
+            return nil
+        }
         moveMeta(from: url, to: destination)
         refresh()
         onMove?(url, destination)
@@ -396,14 +423,22 @@ final class Library {
                       !folder.standardizedFileURL.path.hasPrefix(url.standardizedFileURL.path + "/")
                 else { continue }
                 let destination = uniqueURL(in: folder, base: url.deletingPathExtension().lastPathComponent, ext: url.pathExtension)
-                if (try? FileManager.default.moveItem(at: url, to: destination)) != nil {
+                do {
+                    try FileManager.default.moveItem(at: url, to: destination)
                     moveMeta(from: url, to: destination)
                     onMove?(url, destination)
                     results.append(destination)
+                } catch {
+                    lastError = "Couldn't move \"\(url.lastPathComponent)\": \(error.localizedDescription)"
                 }
             } else if Self.audioExtensions.contains(url.pathExtension.lowercased()) {
                 let destination = uniqueURL(in: folder, base: url.deletingPathExtension().lastPathComponent, ext: url.pathExtension)
-                if (try? FileManager.default.copyItem(at: url, to: destination)) != nil { results.append(destination) }
+                do {
+                    try FileManager.default.copyItem(at: url, to: destination)
+                    results.append(destination)
+                } catch {
+                    lastError = "Couldn't import \"\(url.lastPathComponent)\": \(error.localizedDescription)"
+                }
             }
         }
         refresh()
@@ -416,8 +451,12 @@ final class Library {
     }
 
     func trash(_ url: URL) {
-        try? FileManager.default.trashItem(at: url, resultingItemURL: nil)
-        removeMeta(for: url)
+        do {
+            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            removeMeta(for: url)
+        } catch {
+            lastError = "Couldn't move \"\(url.lastPathComponent)\" to the Trash: \(error.localizedDescription)"
+        }
         refresh()
     }
 

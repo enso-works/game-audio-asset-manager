@@ -85,6 +85,11 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             library.refresh()
         }
+        .alert("Something went wrong", isPresented: Binding(get: { library.lastError != nil }, set: { if !$0 { library.lastError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(library.lastError ?? "")
+        }
     }
 
     private var guardedSelection: Binding<SidebarItem?> {

@@ -48,18 +48,38 @@ struct ProjectConfig: Codable {
         project.appendingPathComponent(folderName).appendingPathComponent(fileName)
     }
 
-    static func load(from project: URL) -> ProjectConfig {
-        guard let data = try? Data(contentsOf: url(for: project)),
-              let config = try? JSONDecoder.project.decode(ProjectConfig.self, from: data)
-        else { return ProjectConfig() }
-        return config
+    enum LoadResult {
+        case loaded(ProjectConfig)
+        case missing
+        /// The file couldn't be read; it was moved aside so a fresh config doesn't overwrite it.
+        case corrupt(backup: URL)
     }
 
-    func save(to project: URL) {
+    static func load(from project: URL) -> ProjectConfig {
+        if case .loaded(let config) = read(from: project) { return config }
+        return ProjectConfig()
+    }
+
+    static func read(from project: URL) -> LoadResult {
+        let file = url(for: project)
+        guard let data = try? Data(contentsOf: file) else { return .missing }
+        if let config = try? JSONDecoder.project.decode(ProjectConfig.self, from: data) { return .loaded(config) }
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let backup = file.deletingLastPathComponent().appendingPathComponent("project.broken-\(stamp).json")
+        try? FileManager.default.moveItem(at: file, to: backup)
+        return .corrupt(backup: backup)
+    }
+
+    /// Writes atomically; returns the error instead of throwing so callers can report it.
+    @discardableResult
+    func save(to project: URL) -> Error? {
         let url = Self.url(for: project)
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if let data = try? JSONEncoder.project.encode(self) {
-            try? data.write(to: url, options: .atomic)
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try JSONEncoder.project.encode(self).write(to: url, options: .atomic)
+            return nil
+        } catch {
+            return error
         }
     }
 
