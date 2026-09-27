@@ -10,6 +10,7 @@ struct WaveformDrawState: Equatable {
     var viewStart: Double
     var viewLength: Double
     var regions: [Region]
+    var loop: Range<Int>?
 }
 
 struct WaveformView: NSViewRepresentable {
@@ -45,6 +46,7 @@ final class WaveformNSView: NSView {
         case none
         case select(anchor: Int)
         case resize(fixed: Int)
+        case loop(fixed: Int)
     }
 
     private var dragState = DragState.none
@@ -139,12 +141,38 @@ final class WaveformNSView: NSView {
             NSBezierPath(rect: visible.insetBy(dx: 0.5, dy: 0)).stroke()
         }
 
+        if let loop = model.loop {
+            drawLoop(loop, wave: wave)
+        }
+
         NSColor.systemYellow.withAlphaComponent(0.85).setFill()
         NSRect(x: x(for: model.cursor), y: 0, width: 1, height: bounds.height).fill()
 
         if model.player.isPlaying {
             NSColor.systemRed.setFill()
             NSRect(x: x(for: model.player.position), y: 0, width: 1.5, height: bounds.height).fill()
+        }
+    }
+
+    private func drawLoop(_ loop: Range<Int>, wave: NSRect) {
+        let green = NSColor.systemGreen
+        let x0 = x(for: loop.lowerBound)
+        let x1 = x(for: loop.upperBound)
+        green.setFill()
+        NSRect(x: x0, y: wave.minY, width: 1.5, height: wave.height).fill()
+        NSRect(x: x1 - 1.5, y: wave.minY, width: 1.5, height: wave.height).fill()
+        guard mode == .main else { return }
+        green.withAlphaComponent(0.5).setFill()
+        NSRect(x: x0, y: Self.rulerHeight - 3, width: max(x1 - x0, 1), height: 3).fill()
+        // Drag handles in the ruler.
+        green.setFill()
+        for (edge, pointsRight) in [(x0, true), (x1, false)] {
+            let path = NSBezierPath()
+            path.move(to: NSPoint(x: edge, y: 0))
+            path.line(to: NSPoint(x: edge, y: Self.rulerHeight))
+            path.line(to: NSPoint(x: edge + (pointsRight ? 9 : -9), y: Self.rulerHeight / 2))
+            path.close()
+            path.fill()
         }
     }
 
@@ -178,9 +206,16 @@ final class WaveformNSView: NSView {
     // MARK: - Mouse
 
     override func resetCursorRects() {
-        guard mode == .main, let model, let selection = model.selection, !selection.isEmpty else { return }
-        for edge in [x(for: selection.lowerBound), x(for: selection.upperBound)] {
-            addCursorRect(NSRect(x: edge - 4, y: headerHeight, width: 8, height: bounds.height - headerHeight), cursor: .resizeLeftRight)
+        guard mode == .main, let model else { return }
+        if let selection = model.selection, !selection.isEmpty {
+            for edge in [x(for: selection.lowerBound), x(for: selection.upperBound)] {
+                addCursorRect(NSRect(x: edge - 4, y: headerHeight, width: 8, height: bounds.height - headerHeight), cursor: .resizeLeftRight)
+            }
+        }
+        if let loop = model.loop {
+            for edge in [x(for: loop.lowerBound), x(for: loop.upperBound)] {
+                addCursorRect(NSRect(x: edge - 9, y: 0, width: 18, height: Self.rulerHeight), cursor: .resizeLeftRight)
+            }
         }
     }
 
@@ -196,6 +231,19 @@ final class WaveformNSView: NSView {
         if mode == .overview {
             model.center(on: Double(frame))
             return
+        }
+
+        if point.y < Self.rulerHeight, let loop = model.loop {
+            if abs(point.x - x(for: loop.lowerBound)) < 9 {
+                dragState = .loop(fixed: loop.upperBound)
+                model.beginLoopDrag()
+                return
+            }
+            if abs(point.x - x(for: loop.upperBound)) < 9 {
+                dragState = .loop(fixed: loop.lowerBound)
+                model.beginLoopDrag()
+                return
+            }
         }
 
         let inRegionStrip = point.y >= Self.rulerHeight && point.y < headerHeight
@@ -251,6 +299,8 @@ final class WaveformNSView: NSView {
             model.selection = anchor == frame ? nil : min(anchor, frame)..<max(anchor, frame)
         case .resize(let fixed):
             model.selection = fixed == frame ? nil : min(fixed, frame)..<max(fixed, frame)
+        case .loop(let fixed):
+            model.dragLoop(to: min(fixed, frame)..<max(fixed, frame))
         default:
             break
         }
@@ -261,6 +311,9 @@ final class WaveformNSView: NSView {
         if case .select(let anchor) = dragState, !dragMoved {
             model.selection = nil
             model.seek(to: anchor)
+        }
+        if case .loop = dragState {
+            model.endLoopDrag()
         }
         dragState = .none
     }

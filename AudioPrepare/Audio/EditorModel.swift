@@ -25,6 +25,8 @@ final class EditorModel {
     private(set) var savedRevision = 0
     private(set) var savedAudioRevision = 0
     private(set) var regions: [Region] = []
+    /// Loop points in frames; exported as WAV loop markers and in the manifest.
+    private(set) var loop: Range<Int>?
     private(set) var viewStart: Double = 0
     private(set) var viewLength: Double = 1
     private(set) var isLoading = false
@@ -35,6 +37,7 @@ final class EditorModel {
     var loopPlayback = false
     var fadeMs = 100
     var gainStepDb = 3.0
+    var loopCrossfadeMs = 250
     var showExport = false
     var showSaveAs = false
     var showSaveRegions = false
@@ -47,6 +50,7 @@ final class EditorModel {
     @ObservationIgnored private var loadToken = UUID()
     @ObservationIgnored private var regionCounter = 0
     @ObservationIgnored private var revisionCounter = 0
+    @ObservationIgnored private var loopDragStart: Snapshot?
 
     init() {
         player.onTick = { [weak self] position in self?.follow(position) }
@@ -87,6 +91,11 @@ final class EditorModel {
             let meta = library?.meta(for: url) ?? SoundMeta()
             regions = (meta.regions ?? []).filter { $0.end <= clip.frameCount && $0.start < $0.end }
             regionCounter = regions.count
+            loop = meta.loop.flatMap { points in
+                let start = Int((points.start * clip.sampleRate).rounded())
+                let end = min(Int((points.end * clip.sampleRate).rounded()), clip.frameCount)
+                return end > start ? start..<end : nil
+            }
             markSaved()
             zoomToFit()
             undoManager?.removeAllActions(withTarget: self)
@@ -104,6 +113,7 @@ final class EditorModel {
         clip = nil
         peaks = Peaks()
         regions = []
+        loop = nil
         selection = nil
         markSaved()
         version += 1
@@ -221,8 +231,11 @@ final class EditorModel {
 
     private func persistMeta(for url: URL) {
         let regions = self.regions
+        let rate = sampleRate
+        let loop = self.loop.map { LoopPoints(start: Double($0.lowerBound) / rate, end: Double($0.upperBound) / rate) }
         library?.updateMeta(for: url) { meta in
             meta.regions = regions.isEmpty ? nil : regions
+            meta.loop = loop
         }
     }
 
@@ -232,6 +245,7 @@ final class EditorModel {
         var clip: AudioClip
         var peaks: Peaks
         var regions: [Region]
+        var loop: Range<Int>?
         var selection: Range<Int>?
         var cursor: Int
         var revision: Int
@@ -240,7 +254,7 @@ final class EditorModel {
 
     private func snapshot() -> Snapshot? {
         clip.map {
-            Snapshot(clip: $0, peaks: peaks, regions: regions, selection: selection, cursor: cursor,
+            Snapshot(clip: $0, peaks: peaks, regions: regions, loop: loop, selection: selection, cursor: cursor,
                      revision: revision, audioRevision: audioRevision)
         }
     }
@@ -250,6 +264,7 @@ final class EditorModel {
         clip = snapshot.clip
         peaks = snapshot.peaks
         regions = snapshot.regions
+        loop = snapshot.loop
         selection = snapshot.selection
         cursor = min(snapshot.cursor, snapshot.clip.frameCount)
         revision = snapshot.revision
@@ -314,6 +329,7 @@ final class EditorModel {
         guard let range = selection, !range.isEmpty, range.count < frameCount else { return }
         perform("Trim", fit: true, { AudioOps.slice($0, range) }) { s in
             s.regions = RegionMath.afterTrim(s.regions, to: range)
+            s.loop = RegionMath.trim(s.loop, to: range)
             s.selection = nil
             s.cursor = 0
         }
@@ -323,6 +339,7 @@ final class EditorModel {
         guard let range = selection, !range.isEmpty, range.count < frameCount else { return }
         perform("Delete", { AudioOps.delete($0, range) }) { s in
             s.regions = RegionMath.afterDelete(s.regions, range)
+            s.loop = RegionMath.delete(s.loop, range)
             s.selection = nil
             s.cursor = range.lowerBound
         }
@@ -367,9 +384,102 @@ final class EditorModel {
         else { return }
         perform("Trim Silence", fit: true, { AudioOps.slice($0, keep) }) { s in
             s.regions = RegionMath.afterTrim(s.regions, to: keep)
+            s.loop = RegionMath.trim(s.loop, to: keep)
             s.selection = nil
             s.cursor = 0
         }
+    }
+
+    // MARK: - Loop
+
+    private func changeLoop(_ name: String, _ newLoop: Range<Int>?) {
+        guard let before = snapshot(), newLoop != loop else { return }
+        loop = newLoop
+        revision = nextRevision()
+        registerUndo(restoring: before, name: name)
+    }
+
+    func setLoopFromSelection() {
+        guard let selection, selection.count > 1 else { return }
+        changeLoop("Set Loop", selection)
+    }
+
+    func clearLoop() {
+        changeLoop("Clear Loop", nil)
+    }
+
+    /// Moves both loop points to the nearest rising zero crossing (within 10 ms) to avoid clicks.
+    func snapLoopToZeroCrossings() {
+        guard let clip, let loop else { return }
+        let window = clip.frames(forMilliseconds: 10)
+        let start = AudioOps.nearestZeroCrossing(clip, near: loop.lowerBound, window: window)
+        let end = AudioOps.nearestZeroCrossing(clip, near: loop.upperBound, window: window)
+        guard end > start else { return }
+        changeLoop("Snap Loop", start..<end)
+    }
+
+    /// Crossfades the loop's tail into its head and trims the file to the loop.
+    func makeSeamlessLoop() {
+        guard let clip, let loop, loop.count > 4 else { return }
+        let fade = min(clip.frames(forMilliseconds: loopCrossfadeMs), loop.count / 2)
+        perform("Make Seamless Loop", fit: true, { AudioOps.seamlessLoop($0, loop, crossfade: fade) }) { s in
+            s.regions = []
+            s.loop = 0..<(loop.count - max(fade, 1))
+            s.selection = nil
+            s.cursor = 0
+        }
+    }
+
+    func trimToLoop() {
+        guard let loop, loop.count < frameCount else { return }
+        perform("Trim to Loop", fit: true, { AudioOps.slice($0, loop) }) { s in
+            s.regions = RegionMath.afterTrim(s.regions, to: loop)
+            s.loop = 0..<loop.count
+            s.selection = nil
+            s.cursor = 0
+        }
+    }
+
+    /// Plays the loop forever; with intro, plays from the file start first like the game would.
+    func playLoop(withIntro: Bool = false) {
+        guard let clip, let loop else { return }
+        if withIntro {
+            player.playIntroLoop(clip, loop: loop)
+        } else {
+            player.play(clip, range: loop, loop: true)
+        }
+    }
+
+    /// Plays the end of the loop straight into its start, to judge the seam.
+    func auditionSeam(seconds: Double = 1.5) {
+        guard let clip, let loop else { return }
+        let side = max(1, min(Int(seconds * clip.sampleRate), loop.count / 2))
+        let tail = (loop.upperBound - side)..<loop.upperBound
+        let head = loop.lowerBound..<(loop.lowerBound + side)
+        let seam = AudioClip(
+            channels: clip.channels.map { Array($0[tail]) + Array($0[head]) },
+            sampleRate: clip.sampleRate
+        )
+        player.play(seam, range: 0..<(side * 2), loop: false) { played in
+            played < side ? tail.lowerBound + played : head.lowerBound + min(played - side, side)
+        }
+    }
+
+    func beginLoopDrag() {
+        loopDragStart = snapshot()
+    }
+
+    func dragLoop(to range: Range<Int>) {
+        guard range.count > 1 else { return }
+        loop = range
+    }
+
+    func endLoopDrag() {
+        guard let before = loopDragStart else { return }
+        loopDragStart = nil
+        guard before.loop != loop else { return }
+        revision = nextRevision()
+        registerUndo(restoring: before, name: "Move Loop")
     }
 
     // MARK: - Regions

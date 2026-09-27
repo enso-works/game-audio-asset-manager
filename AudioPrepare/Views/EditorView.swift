@@ -83,6 +83,8 @@ enum KeyCommands {
         default:
             switch key {
             case "r": editor.addRegion()
+            case "k": editor.setLoopFromSelection()
+            case "p": editor.playLoop(withIntro: modifiers == [.shift])
             case "l": editor.loopPlayback.toggle()
             case "t": editor.trimToSelection()
             case "i": editor.fadeIn()
@@ -128,35 +130,53 @@ private struct InfoBar: View {
     @Environment(EditorModel.self) private var editor
 
     var body: some View {
-        let rate = editor.sampleRate
         HStack(spacing: 14) {
             if let clip = editor.clip {
                 Text(formatTime(clip.duration))
                     .font(.headline.monospacedDigit())
                 Text("\(Int(clip.sampleRate)) Hz · \(clip.channelCount == 1 ? "Mono" : "Stereo")")
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
             if editor.isDirty {
-                Text("Unsaved edits")
+                Text("Unsaved")
                     .font(.caption)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(.orange.opacity(0.2), in: Capsule())
             }
             if editor.isBusy { ProgressView().controlSize(.small) }
-            Spacer()
-            Group {
-                if editor.player.isPlaying {
-                    Text("Playing \(formatTime(Double(editor.player.position) / rate))")
-                }
-                Text("Cursor \(formatTime(Double(editor.cursor) / rate))")
-                if let selection = editor.selection, !selection.isEmpty {
-                    Text("Selection \(formatTime(Double(selection.lowerBound) / rate)) – \(formatTime(Double(selection.upperBound) / rate)) (\(String(format: "%.3f", Double(selection.count) / rate)) s)")
-                        .foregroundStyle(Color.accentColor)
-                }
+            Spacer(minLength: 8)
+            // Drops lengths first, then labels, when the pane is narrow.
+            ViewThatFits(in: .horizontal) {
+                positions(labels: true, lengths: true)
+                positions(labels: true, lengths: false)
+                positions(labels: false, lengths: false)
             }
             .font(.callout.monospacedDigit())
         }
+    }
+
+    private func positions(labels: Bool, lengths: Bool) -> some View {
+        let rate = editor.sampleRate
+        func span(_ range: Range<Int>) -> String {
+            let text = "\(formatTime(Double(range.lowerBound) / rate))–\(formatTime(Double(range.upperBound) / rate))"
+            return lengths ? text + String(format: " (%.3f s)", Double(range.count) / rate) : text
+        }
+        return HStack(spacing: 12) {
+            if editor.player.isPlaying {
+                Text((labels ? "Playing " : "▶ ") + formatTime(Double(editor.player.position) / rate))
+            }
+            if let loop = editor.loop {
+                Text((labels ? "Loop " : "⟳ ") + span(loop)).foregroundStyle(.green)
+            }
+            Text((labels ? "Cursor " : "") + formatTime(Double(editor.cursor) / rate))
+            if let selection = editor.selection, !selection.isEmpty {
+                Text((labels ? "Selection " : "") + span(selection)).foregroundStyle(Color.accentColor)
+            }
+        }
+        .lineLimit(1)
+        .fixedSize()
     }
 }
 
@@ -171,7 +191,8 @@ private struct WaveformPanel: View {
             playhead: editor.player.isPlaying ? editor.player.position : nil,
             viewStart: editor.viewStart,
             viewLength: editor.viewLength,
-            regions: editor.regions
+            regions: editor.regions,
+            loop: editor.loop
         )
         VStack(spacing: 6) {
             WaveformView(model: editor, mode: .overview, state: state)
@@ -188,64 +209,109 @@ private struct EditBar: View {
     @Environment(EditorModel.self) private var editor
 
     var body: some View {
-        @Bindable var editor = editor
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text("Cut").font(.caption.bold()).foregroundStyle(.secondary).frame(width: 52, alignment: .leading)
-                Group {
-                    Button("Trim to Selection", systemImage: "crop") { editor.trimToSelection() }
-                        .help("Keep only the selected part (T)")
-                    Button("Delete", systemImage: "scissors") { editor.deleteSelection() }
-                        .help("Cut the selected part out (Delete)")
-                    Button("Silence", systemImage: "speaker.slash") { editor.silenceSelection() }
-                        .help("Replace the selection with silence")
-                    Button("Add Region", systemImage: "flag") { editor.addRegion() }
-                        .help("Mark the selection as a region to export as its own file (R)")
-                }
-                .disabled(!editor.hasSelection)
-                Button("Trim Silence", systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right") { editor.trimSilence() }
-                    .help("Remove silence (below -50 dB) from start and end")
-                Spacer()
-            }
-            HStack(spacing: 8) {
-                Text("Process").font(.caption.bold()).foregroundStyle(.secondary).frame(width: 52, alignment: .leading)
-                Button("Fade In", systemImage: "arrow.up.right") { editor.fadeIn() }
-                    .help("Fade in over the selection, or the start of the file (I)")
-                Button("Fade Out", systemImage: "arrow.down.right") { editor.fadeOut() }
-                    .help("Fade out over the selection, or the end of the file (O)")
-                Picker("Fade", selection: $editor.fadeMs) {
-                    ForEach([10, 25, 50, 100, 250, 500, 1000, 2000], id: \.self) { Text("\($0) ms").tag($0) }
-                }
-                .labelsHidden()
-                .fixedSize()
-                .help("Fade length when nothing is selected")
-                Divider().frame(height: 18)
-                Button("Quieter", systemImage: "speaker.wave.1") { editor.applyGain(-editor.gainStepDb) }
-                Button("Louder", systemImage: "speaker.wave.3") { editor.applyGain(editor.gainStepDb) }
-                Picker("Gain", selection: $editor.gainStepDb) {
-                    ForEach([1.0, 3.0, 6.0, 12.0], id: \.self) { Text("\(Int($0)) dB").tag($0) }
-                }
-                .labelsHidden()
-                .fixedSize()
-                Divider().frame(height: 18)
-                Button("Normalize", systemImage: "waveform.badge.plus") { editor.normalize() }
-                    .help("Raise peak to -1 dBFS (N)")
-                Button("Reverse", systemImage: "arrow.uturn.left") { editor.reverse() }
-                Spacer()
-            }
+            row("Cut") { cutButtons }
+            row("Process") { processButtons }
+            row("Loop") { loopButtons }
             HStack {
                 Text(editor.hasSelection ? "Processing applies to the selection." : "Nothing selected: processing applies to the whole file.")
                     .foregroundStyle(.secondary)
                 Spacer()
                 Text("Drag to select · Shift-click extends · Double-click selects all · Scroll to zoom")
                     .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
             .font(.caption)
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
-        .labelStyle(CompactLabelStyle())
         .disabled(editor.isBusy)
+    }
+
+    /// A labeled row of buttons that falls back to icons only when the pane is too narrow.
+    private func row<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        let buttons = content()
+        return HStack(spacing: 8) {
+            Text(title).font(.caption.bold()).foregroundStyle(.secondary).frame(width: 52, alignment: .leading)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { buttons }.labelStyle(CompactLabelStyle())
+                HStack(spacing: 6) { buttons }.labelStyle(.iconOnly)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    @ViewBuilder private var cutButtons: some View {
+        Group {
+            Button("Trim to Selection", systemImage: "crop") { editor.trimToSelection() }
+                .help("Keep only the selected part (T)")
+            Button("Delete", systemImage: "scissors") { editor.deleteSelection() }
+                .help("Cut the selected part out (Delete)")
+            Button("Silence", systemImage: "speaker.slash") { editor.silenceSelection() }
+                .help("Replace the selection with silence")
+            Button("Add Region", systemImage: "flag") { editor.addRegion() }
+                .help("Mark the selection as a region to export as its own file (R)")
+        }
+        .disabled(!editor.hasSelection)
+        Button("Trim Silence", systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right") { editor.trimSilence() }
+            .help("Remove silence (below -50 dB) from start and end")
+    }
+
+    @ViewBuilder private var processButtons: some View {
+        @Bindable var editor = editor
+        Button("Fade In", systemImage: "arrow.up.right") { editor.fadeIn() }
+            .help("Fade in over the selection, or the start of the file (I)")
+        Button("Fade Out", systemImage: "arrow.down.right") { editor.fadeOut() }
+            .help("Fade out over the selection, or the end of the file (O)")
+        Picker("Fade", selection: $editor.fadeMs) {
+            ForEach([10, 25, 50, 100, 250, 500, 1000, 2000], id: \.self) { Text("\($0) ms").tag($0) }
+        }
+        .labelsHidden()
+        .fixedSize()
+        .help("Fade length when nothing is selected")
+        Button("Quieter", systemImage: "speaker.wave.1") { editor.applyGain(-editor.gainStepDb) }
+            .help("Lower the volume by the gain step")
+        Button("Louder", systemImage: "speaker.wave.3") { editor.applyGain(editor.gainStepDb) }
+            .help("Raise the volume by the gain step")
+        Picker("Gain", selection: $editor.gainStepDb) {
+            ForEach([1.0, 3.0, 6.0, 12.0], id: \.self) { Text("\(Int($0)) dB").tag($0) }
+        }
+        .labelsHidden()
+        .fixedSize()
+        .help("Gain step")
+        Button("Normalize", systemImage: "waveform.badge.plus") { editor.normalize() }
+            .help("Raise peak to -1 dBFS (N)")
+        Button("Reverse", systemImage: "arrow.uturn.left") { editor.reverse() }
+            .help("Reverse the selection or the whole file")
+    }
+
+    @ViewBuilder private var loopButtons: some View {
+        @Bindable var editor = editor
+        Button("Set", systemImage: "repeat") { editor.setLoopFromSelection() }
+            .disabled(!editor.hasSelection)
+            .help("Use the selection as loop start and end (K)")
+        Group {
+            Button("Play", systemImage: "repeat.circle") { editor.playLoop() }
+                .help("Repeat the loop (P). Shift P plays the intro first, like the game.")
+            Button("Seam", systemImage: "ear") { editor.auditionSeam() }
+                .help("Play the end of the loop into its start to check the join")
+            Button("Snap", systemImage: "scope") { editor.snapLoopToZeroCrossings() }
+                .help("Move loop points to the nearest zero crossing to avoid clicks")
+            Button("Seamless", systemImage: "infinity") { editor.makeSeamlessLoop() }
+                .help("Crossfade the loop end into its start and trim the file to the loop")
+            Picker("Crossfade", selection: $editor.loopCrossfadeMs) {
+                ForEach([10, 50, 100, 250, 500, 1000, 2000], id: \.self) { Text("\($0) ms").tag($0) }
+            }
+            .labelsHidden()
+            .fixedSize()
+            .help("Crossfade length for Make Seamless")
+            Button("Trim", systemImage: "crop") { editor.trimToLoop() }
+                .help("Cut everything outside the loop")
+            Button("Clear", systemImage: "xmark") { editor.clearLoop() }
+                .help("Remove the loop points")
+        }
+        .disabled(editor.loop == nil)
     }
 }
 

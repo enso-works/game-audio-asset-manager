@@ -78,6 +78,44 @@ enum AudioOps {
         return last >= first ? first..<(last + 1) : nil
     }
 
+    /// Nearest rising zero crossing within the window, so loop points don't click.
+    static func nearestZeroCrossing(_ clip: AudioClip, near frame: Int, window: Int) -> Int {
+        let n = clip.frameCount
+        func value(_ i: Int) -> Float {
+            var sum: Float = 0
+            for channel in clip.channels { sum += channel[i] }
+            return sum
+        }
+        for distance in 0...window {
+            for i in [frame - distance, frame + distance] where i > 0 && i < n {
+                if value(i - 1) < 0 && value(i) >= 0 { return i }
+            }
+        }
+        return frame
+    }
+
+    /// Bakes a seamless loop: keeps the loop body and crossfades its tail into its head, so the
+    /// jump from the last sample back to the first is continuous. The result is only the loop.
+    static func seamlessLoop(_ clip: AudioClip, _ loop: Range<Int>, crossfade: Int) -> AudioClip {
+        let start = loop.lowerBound
+        let end = loop.upperBound
+        let fade = min(max(crossfade, 1), (end - start) / 2)
+        let length = end - start - fade
+        let gains = (0..<fade).map { j -> (Float, Float) in
+            let t = (Double(j) + 0.5) / Double(fade) * Double.pi / 2
+            return (Float(sin(t)), Float(cos(t)))
+        }
+        let channels = clip.channels.map { x -> [Float] in
+            var out = Array(x[(start + fade)..<end])
+            for j in 0..<fade {
+                let (fadeIn, fadeOut) = gains[j]
+                out[length - fade + j] = x[end - fade + j] * fadeOut + x[start + j] * fadeIn
+            }
+            return out
+        }
+        return AudioClip(channels: channels, sampleRate: clip.sampleRate)
+    }
+
     private static func modify(_ clip: AudioClip, _ range: Range<Int>, _ body: (UnsafeMutablePointer<Float>, Int) -> Void) -> AudioClip {
         guard !range.isEmpty else { return clip }
         var out = clip
@@ -92,6 +130,25 @@ enum AudioOps {
 
 /// Keeps regions aligned with the audio after structural edits.
 enum RegionMath {
+    static func trim(_ range: Range<Int>?, to kept: Range<Int>) -> Range<Int>? {
+        guard let range else { return nil }
+        let start = max(range.lowerBound, kept.lowerBound)
+        let end = min(range.upperBound, kept.upperBound)
+        return end > start ? (start - kept.lowerBound)..<(end - kept.lowerBound) : nil
+    }
+
+    static func delete(_ range: Range<Int>?, _ removed: Range<Int>) -> Range<Int>? {
+        guard let range else { return nil }
+        func map(_ x: Int) -> Int {
+            if x <= removed.lowerBound { return x }
+            if x < removed.upperBound { return removed.lowerBound }
+            return x - removed.count
+        }
+        let start = map(range.lowerBound)
+        let end = map(range.upperBound)
+        return end > start ? start..<end : nil
+    }
+
     static func afterTrim(_ regions: [Region], to range: Range<Int>) -> [Region] {
         regions.compactMap { region in
             var r = region
