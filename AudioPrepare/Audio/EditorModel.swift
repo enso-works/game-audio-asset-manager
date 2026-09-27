@@ -52,6 +52,9 @@ final class EditorModel {
     private(set) var viewMode = WaveformViewMode(rawValue: UserDefaults.standard.string(forKey: "viewMode") ?? "") ?? .waveform
     /// Sounds found by auto-split, shown on the waveform before they become regions.
     var splitPreview: [Range<Int>] = []
+    /// Tempo and downbeat for music; drives the beat grid and bar-length loops.
+    private(set) var tempo: TempoInfo?
+    var showBeatGrid = true
     /// Where the sound came from (YouTube link, title, channel), shown for attribution.
     private(set) var source: SoundMeta?
     private(set) var viewStart: Double = 0
@@ -71,6 +74,7 @@ final class EditorModel {
     var pitchSpread = 2.0
     var showVariations = false
     var showAutoSplit = false
+    var showTempo = false
     var showShortcuts = false
     /// Copied audio, shared across files so sounds can be combined.
     static var clipboard: AudioClip?
@@ -128,6 +132,7 @@ final class EditorModel {
             cursor = 0
             let meta = library?.meta(for: url) ?? SoundMeta()
             source = meta.hasSource ? meta.sourceOnly : nil
+            tempo = meta.tempo
             regions = (meta.regions ?? []).filter { $0.end <= clip.frameCount && $0.start < $0.end }
             regionCounter = regions.count
             loop = meta.loop.flatMap { points in
@@ -154,6 +159,7 @@ final class EditorModel {
         peaks = Peaks()
         regions = []
         loop = nil
+        tempo = nil
         source = nil
         selection = nil
         markSaved()
@@ -274,9 +280,11 @@ final class EditorModel {
         let regions = self.regions
         let rate = sampleRate
         let loop = self.loop.map { LoopPoints(start: Double($0.lowerBound) / rate, end: Double($0.upperBound) / rate) }
+        let tempo = self.tempo
         library?.updateMeta(for: url) { meta in
             meta.regions = regions.isEmpty ? nil : regions
             meta.loop = loop
+            meta.tempo = tempo
         }
     }
 
@@ -287,6 +295,7 @@ final class EditorModel {
         var peaks: Peaks
         var regions: [Region]
         var loop: Range<Int>?
+        var tempo: TempoInfo?
         var selection: Range<Int>?
         var cursor: Int
         var revision: Int
@@ -295,7 +304,7 @@ final class EditorModel {
 
     private func snapshot() -> Snapshot? {
         clip.map {
-            Snapshot(clip: $0, peaks: peaks, regions: regions, loop: loop, selection: selection, cursor: cursor,
+            Snapshot(clip: $0, peaks: peaks, regions: regions, loop: loop, tempo: tempo, selection: selection, cursor: cursor,
                      revision: revision, audioRevision: audioRevision)
         }
     }
@@ -307,6 +316,7 @@ final class EditorModel {
         peaks = snapshot.peaks
         regions = snapshot.regions
         loop = snapshot.loop
+        tempo = snapshot.tempo
         selection = snapshot.selection
         cursor = min(snapshot.cursor, snapshot.clip.frameCount)
         revision = snapshot.revision
@@ -405,6 +415,7 @@ final class EditorModel {
         perform("Trim", fit: true, { AudioOps.slice($0, range) }) { s in
             s.regions = RegionMath.afterTrim(s.regions, to: range)
             s.loop = RegionMath.trim(s.loop, to: range)
+            s.tempo = s.tempo?.shifted(by: -Double(range.lowerBound) / s.clip.sampleRate)
             s.selection = nil
             s.cursor = 0
         }
@@ -466,6 +477,7 @@ final class EditorModel {
         perform("Trim Silence", fit: true, { AudioOps.slice($0, keep) }) { s in
             s.regions = RegionMath.afterTrim(s.regions, to: keep)
             s.loop = RegionMath.trim(s.loop, to: keep)
+            s.tempo = s.tempo?.shifted(by: -Double(keep.lowerBound) / s.clip.sampleRate)
             s.selection = nil
             s.cursor = 0
         }
@@ -506,6 +518,7 @@ final class EditorModel {
         perform("Make Seamless Loop", fit: true, { AudioOps.seamlessLoop($0, loop, crossfade: fade) }) { s in
             s.regions = []
             s.loop = 0..<(loop.count - max(fade, 1))
+            s.tempo = s.tempo?.shifted(by: -Double(loop.lowerBound + fade) / s.clip.sampleRate)
             s.selection = nil
             s.cursor = 0
         }
@@ -516,6 +529,7 @@ final class EditorModel {
         perform("Trim to Loop", fit: true, { AudioOps.slice($0, loop) }) { s in
             s.regions = RegionMath.afterTrim(s.regions, to: loop)
             s.loop = 0..<loop.count
+            s.tempo = s.tempo?.shifted(by: -Double(loop.lowerBound) / s.clip.sampleRate)
             s.selection = nil
             s.cursor = 0
         }
@@ -544,6 +558,74 @@ final class EditorModel {
         player.play(seam, range: 0..<(side * 2), loop: false) { played in
             played < side ? tail.lowerBound + played : head.lowerBound + min(played - side, side)
         }
+    }
+
+    // MARK: - Tempo
+
+    private func changeTempo(_ name: String, _ newTempo: TempoInfo?) {
+        guard let before = snapshot(), newTempo != tempo else { return }
+        tempo = newTempo
+        revision = nextRevision()
+        registerUndo(restoring: before, name: name)
+    }
+
+    /// Detects tempo over the loop, the selection, or the whole sound. Returns false if there's no clear beat.
+    @discardableResult
+    func detectTempo() -> Bool {
+        guard let clip else { return false }
+        let range = loop ?? (hasSelection ? editRange : 0..<clip.frameCount)
+        guard let detected = TempoDetector.detect(clip, range: range, beatsPerBar: tempo?.beatsPerBar ?? 4) else { return false }
+        changeTempo("Detect Tempo", detected)
+        return true
+    }
+
+    func setBPM(_ bpm: Double) {
+        guard bpm >= 20, bpm <= 400 else { return }
+        var updated = tempo ?? TempoInfo(bpm: bpm, offset: 0, beatsPerBar: 4)
+        updated.bpm = bpm
+        changeTempo("Set Tempo", updated)
+    }
+
+    func setBeatsPerBar(_ beats: Int) {
+        guard var updated = tempo else { return }
+        updated.beatsPerBar = beats
+        changeTempo("Set Meter", updated)
+    }
+
+    func setDownbeatAtCursor() {
+        guard var updated = tempo else { return }
+        updated.offset = Double(player.isPlaying ? player.position : cursor) / sampleRate
+        changeTempo("Set Downbeat", updated)
+    }
+
+    func clearTempo() {
+        changeTempo("Clear Tempo", nil)
+    }
+
+    var loopBars: Double? {
+        guard let loop, let tempo else { return nil }
+        return Double(loop.count) / sampleRate / tempo.barSeconds
+    }
+
+    /// Moves the loop start to the nearest downbeat and makes the loop a whole number of bars.
+    func snapLoopToBars() {
+        guard let loop, let bars = loopBars else { return }
+        setLoopBars(max(1, Int(bars.rounded())), from: loop.lowerBound)
+    }
+
+    /// Sets the loop to `bars` bars starting at the downbeat nearest to `frame` (loop start or cursor).
+    func setLoopBars(_ bars: Int, from frame: Int? = nil) {
+        guard let tempo, bars > 0, frameCount > 0 else { return }
+        let rate = sampleRate
+        let anchor = Double(frame ?? loop?.lowerBound ?? cursor) / rate
+        var start = tempo.nearestBeat(to: anchor, bars: true)
+        if start < 0 { start += tempo.barSeconds }
+        var count = bars
+        while count > 1 && start + Double(count) * tempo.barSeconds > Double(frameCount) / rate { count -= 1 }
+        let startFrame = Int((start * rate).rounded())
+        let endFrame = min(frameCount, Int(((start + Double(count) * tempo.barSeconds) * rate).rounded()))
+        guard endFrame > startFrame else { return }
+        changeLoop("Loop \(count) Bars", startFrame..<endFrame)
     }
 
     func beginLoopDrag() {

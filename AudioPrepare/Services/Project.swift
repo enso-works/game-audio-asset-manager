@@ -10,6 +10,7 @@ struct LoopPoints: Codable, Equatable, Sendable {
 struct SoundMeta: Codable, Equatable {
     var regions: [Region]?
     var loop: LoopPoints?
+    var tempo: TempoInfo?
     var sourceURL: String?
     var sourceTitle: String?
     var sourceChannel: String?

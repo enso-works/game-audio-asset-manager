@@ -188,6 +188,8 @@ private struct WaveformPanel: View {
             loop: editor.loop,
             splitPreview: editor.splitPreview,
             viewMode: editor.viewMode,
+            tempo: editor.tempo,
+            showBeatGrid: editor.showBeatGrid,
             spectrogramID: editor.spectrogram?.id
         )
         VStack(spacing: 6) {
@@ -351,6 +353,9 @@ private struct EditBar: View {
                 .help("Remove the loop points (Shift K)")
         }
         .disabled(editor.loop == nil)
+        Button(editor.tempo.map { String(format: "%g BPM", $0.bpm) } ?? "Tempo", systemImage: "metronome") { editor.showTempo = true }
+            .help("Detect BPM, show a beat grid, and make loops a whole number of bars")
+            .popover(isPresented: $editor.showTempo, arrowEdge: .bottom) { TempoPopover() }
     }
 }
 
@@ -510,5 +515,82 @@ private struct AutoSplitPopover: View {
         editor.splitPreview = AudioOps.detectSounds(
             clip, thresholdDb: threshold, minSilenceMs: Int(minSilence), minSoundMs: Int(minSound), paddingMs: Int(padding)
         )
+    }
+}
+
+/// Tempo tools for music loops: detect BPM, beat grid, and bar-length loops.
+private struct TempoPopover: View {
+    @Environment(EditorModel.self) private var editor
+    @State private var bpmText = ""
+    @State private var message: String?
+    @State private var bars = 4
+
+    var body: some View {
+        @Bindable var editor = editor
+        Form {
+            Section {
+                HStack {
+                    TextField("BPM", text: $bpmText, prompt: Text("BPM"))
+                        .frame(width: 90)
+                        .onSubmit(applyBPM)
+                    Button("Set", action: applyBPM)
+                        .disabled(Double(bpmText) == nil)
+                    Spacer()
+                    Button("Detect", systemImage: "waveform.badge.magnifyingglass") {
+                        message = editor.detectTempo() ? nil : "No clear beat found. Type the BPM instead."
+                        bpmText = editor.tempo.map { String(format: "%g", $0.bpm) } ?? bpmText
+                    }
+                    .help("Analyzes the loop, the selection, or the whole sound")
+                }
+                if let message {
+                    Text(message).font(.caption).foregroundStyle(.orange)
+                }
+                if let tempo = editor.tempo {
+                    Picker("Beats per bar", selection: Binding(get: { tempo.beatsPerBar }, set: { editor.setBeatsPerBar($0) })) {
+                        ForEach([2, 3, 4, 6, 8], id: \.self) { Text("\($0)").tag($0) }
+                    }
+                    Toggle("Show beat grid", isOn: $editor.showBeatGrid)
+                    HStack {
+                        Text(String(format: "Beat %.3f s · Bar %.3f s", tempo.beatSeconds, tempo.barSeconds))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Downbeat at Cursor") { editor.setDownbeatAtCursor() }
+                            .help("Move the grid so a bar starts at the cursor (or playhead)")
+                    }
+                }
+            } header: {
+                Text("Tempo")
+            }
+
+            if editor.tempo != nil {
+                Section {
+                    if let loopBars = editor.loopBars {
+                        LabeledContent("Current loop", value: String(format: "%.2f bars", loopBars))
+                        Button("Snap Loop to Whole Bars") { editor.snapLoopToBars() }
+                            .help("Start on the nearest downbeat and round the length to whole bars")
+                    }
+                    HStack {
+                        Stepper("\(bars) bar\(bars == 1 ? "" : "s")", value: $bars, in: 1...64)
+                        Spacer()
+                        Button("Set Loop") { editor.setLoopBars(bars) }
+                            .help("Loop this many bars from the downbeat nearest the loop start or cursor")
+                    }
+                } header: {
+                    Text("Loop in bars")
+                } footer: {
+                    Text("Loops that are whole bars repeat in time with the music. Use Make Seamless afterwards if the join clicks.")
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 380)
+        .onAppear { bpmText = editor.tempo.map { String(format: "%g", $0.bpm) } ?? "" }
+    }
+
+    private func applyBPM() {
+        guard let bpm = Double(bpmText.replacingOccurrences(of: ",", with: ".")) else { return }
+        editor.setBPM(bpm)
+        message = nil
     }
 }

@@ -13,6 +13,8 @@ struct WaveformDrawState: Equatable {
     var loop: Range<Int>?
     var splitPreview: [Range<Int>]
     var viewMode: WaveformViewMode
+    var tempo: TempoInfo?
+    var showBeatGrid: Bool
     var spectrogramID: UUID?
 }
 
@@ -178,6 +180,10 @@ final class WaveformNSView: NSView {
             NSBezierPath(rect: visible.insetBy(dx: 0.5, dy: 0)).stroke()
         }
 
+        if mode == .main, model.showBeatGrid, let tempo = model.tempo {
+            drawBeatGrid(tempo, in: full, sampleRate: clip.sampleRate)
+        }
+
         if let loop = model.loop {
             drawLoop(loop, wave: full)
         }
@@ -188,6 +194,36 @@ final class WaveformNSView: NSView {
         if model.player.isPlaying {
             NSColor.systemRed.setFill()
             NSRect(x: x(for: model.player.position), y: 0, width: 1.5, height: bounds.height).fill()
+        }
+    }
+
+    /// Faint lines on every beat, stronger on bar starts. Skipped when beats would be too dense.
+    private func drawBeatGrid(_ tempo: TempoInfo, in rect: NSRect, sampleRate: Double) {
+        guard let model else { return }
+        let beatFrames = tempo.beatSeconds * sampleRate
+        let pixelsPerBeat = beatFrames / model.viewLength * Double(bounds.width)
+        let showBeats = pixelsPerBeat >= 6
+        guard showBeats || pixelsPerBeat * Double(tempo.beatsPerBar) >= 6 else { return }
+        let offsetFrames = tempo.offset * sampleRate
+        var beat = Int(((model.viewStart - offsetFrames) / beatFrames).rounded(.down))
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 8, weight: .semibold),
+            .foregroundColor: NSColor.systemCyan.withAlphaComponent(0.8),
+        ]
+        while true {
+            let frame = offsetFrames + Double(beat) * beatFrames
+            if frame > model.viewStart + model.viewLength { break }
+            let isBar = ((beat % tempo.beatsPerBar) + tempo.beatsPerBar) % tempo.beatsPerBar == 0
+            if isBar || showBeats {
+                let x = x(for: Int(frame))
+                NSColor.systemCyan.withAlphaComponent(isBar ? 0.35 : 0.12).setFill()
+                NSRect(x: x, y: rect.minY, width: 1, height: rect.height).fill()
+                if isBar && pixelsPerBeat * Double(tempo.beatsPerBar) >= 24 {
+                    let bar = Int((Double(beat) / Double(tempo.beatsPerBar)).rounded(.down)) + 1
+                    ("\(bar)" as NSString).draw(at: NSPoint(x: x + 2, y: rect.maxY - 11), withAttributes: attributes)
+                }
+            }
+            beat += 1
         }
     }
 

@@ -107,6 +107,10 @@ enum ProjectExporter {
             } else {
                 entry["loop"] = false
             }
+            if let tempo = item.meta.tempo {
+                entry["bpm"] = tempo.bpm
+                entry["beatsPerBar"] = tempo.beatsPerBar
+            }
             if let source = item.meta.sourceURL { entry["source"] = source }
             sounds[item.key] = entry
         }
