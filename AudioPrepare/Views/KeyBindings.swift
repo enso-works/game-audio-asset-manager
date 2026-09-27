@@ -13,6 +13,8 @@ struct KeyBinding: Identifiable {
     let label: String
     let title: String
     let group: String
+    /// The tool this shortcut runs, so hover cards can show it.
+    var tool: EditorTool?
     /// Nil for shortcuts handled by the menu (listed for reference only).
     let action: (@MainActor (EditorModel) -> Void)?
 
@@ -34,9 +36,9 @@ enum KeyCommands {
 
     private static func bind(
         _ keys: [KeyBinding.Key], _ modifiers: NSEvent.ModifierFlags = [], _ label: String, _ title: String, _ group: String,
-        _ action: (@MainActor (EditorModel) -> Void)?
+        tool: EditorTool? = nil, _ action: (@MainActor (EditorModel) -> Void)?
     ) -> KeyBinding {
-        KeyBinding(keys: keys, modifiers: modifiers, label: label, title: title, group: group, action: action)
+        KeyBinding(keys: keys, modifiers: modifiers, label: label, title: title, group: group, tool: tool, action: action)
     }
 
     private static func char(_ value: String) -> [KeyBinding.Key] { [.character(value)] }
@@ -66,10 +68,10 @@ enum KeyCommands {
         bind(char("."), [], ".", "Select next region", "Selection") { $0.selectAdjacentRegion(forward: true) },
 
         // Edit
-        bind(char("c") + [.code(delete), .code(forwardDelete)], [], "C / Delete", "Cut the selection out", "Edit") { $0.deleteSelection() },
-        bind(char("t"), [], "T", "Trim to selection", "Edit") { $0.trimToSelection() },
-        bind(char("t"), [.shift], "Shift T", "Trim silence at both ends", "Edit") { $0.trimSilence() },
-        bind(char("s"), [], "S", "Silence the selection", "Edit") { $0.silenceSelection() },
+        bind(char("c") + [.code(delete), .code(forwardDelete)], [], "C / Delete", "Cut the selection out", "Edit", tool: .cut) { $0.deleteSelection() },
+        bind(char("t"), [], "T", "Trim to selection", "Edit", tool: .trim) { $0.trimToSelection() },
+        bind(char("t"), [.shift], "Shift T", "Trim silence at both ends", "Edit", tool: .trimSilence) { $0.trimSilence() },
+        bind(char("s"), [], "S", "Silence the selection", "Edit", tool: .silence) { $0.silenceSelection() },
         bind(char("c"), [.command], "Cmd C", "Copy audio", "Edit") { $0.copySelection() },
         bind(char("x"), [.command], "Cmd X", "Cut audio to clipboard", "Edit") { $0.cutSelection() },
         bind(char("v"), [.command], "Cmd V", "Paste at cursor or over selection", "Edit") { $0.paste() },
@@ -77,29 +79,35 @@ enum KeyCommands {
         bind([], [.command], "Cmd S", "Save (Shift Cmd S: Save As)", "Edit", nil),
 
         // Process
-        bind(char("i"), [], "I", "Fade in", "Process") { $0.fadeIn() },
-        bind(char("o"), [], "O", "Fade out", "Process") { $0.fadeOut() },
-        bind(char("n"), [], "N", "Normalize to -1 dB", "Process") { $0.normalize() },
-        bind(char("="), [], "=", "Louder by gain step", "Process") { $0.applyGain($0.gainStepDb) },
-        bind(char("-"), [], "-", "Quieter by gain step", "Process") { $0.applyGain(-$0.gainStepDb) },
-        bind(char("v"), [], "V", "Reverse", "Process") { $0.reverse() },
-        bind(char("b"), [], "B", "Low cut (bass)", "Process") { $0.applyFilter(.lowCut) },
-        bind(char("h"), [], "H", "High cut", "Process") { $0.applyFilter(.highCut) },
+        bind(char("i"), [], "I", "Fade in", "Process", tool: .fadeIn) { $0.fadeIn() },
+        bind(char("o"), [], "O", "Fade out", "Process", tool: .fadeOut) { $0.fadeOut() },
+        bind(char("n"), [], "N", "Normalize to -1 dB", "Process", tool: .normalize) { $0.normalize() },
+        bind(char("="), [], "=", "Louder by gain step", "Process", tool: .louder) { $0.applyGain($0.gainStepDb) },
+        bind(char("-"), [], "-", "Quieter by gain step", "Process", tool: .quieter) { $0.applyGain(-$0.gainStepDb) },
+        bind(char("v"), [], "V", "Reverse", "Process", tool: .reverse) { $0.reverse() },
+        bind(char("b"), [], "B", "Low cut (bass)", "Process", tool: .lowCut) { $0.applyFilter(.lowCut) },
+        bind(char("h"), [], "H", "High cut", "Process", tool: .highCut) { $0.applyFilter(.highCut) },
+        bind(char("d"), [], "D", "Denoise...", "Process", tool: .denoise) { $0.showDenoise = true },
+        bind(char("d"), [.shift], "Shift D", "Learn noise from selection", "Process", tool: .learnNoise) { $0.learnNoise() },
+        bind(char("u"), [], "U", "Make mono", "Process", tool: .mono) { $0.makeMono() },
+        bind(char("f"), [], "F", "Pitch & speed...", "Process", tool: .pitchSpeed) { $0.showPitchSpeed = true },
+        bind(char("e"), [], "E", "Reverb...", "Process", tool: .reverb) { $0.showReverb = true },
+        bind(char("q"), [], "Q", "Compress...", "Process", tool: .compress) { $0.showCompress = true },
 
         // Regions & loops
-        bind(char("r"), [], "R", "Add region from selection", "Regions & Loops") { $0.addRegion() },
-        bind(char("r"), [.shift], "Shift R", "Auto-split by silence", "Regions & Loops") { $0.showAutoSplit = true },
-        bind(char("k"), [], "K", "Set loop from selection", "Regions & Loops") { $0.setLoopFromSelection() },
-        bind(char("k"), [.shift], "Shift K", "Clear loop", "Regions & Loops") { $0.clearLoop() },
-        bind(char("p"), [], "P", "Play loop", "Regions & Loops") { $0.playLoop() },
+        bind(char("r"), [], "R", "Add region from selection", "Regions & Loops", tool: .addRegion) { $0.addRegion() },
+        bind(char("r"), [.shift], "Shift R", "Auto-split by silence", "Regions & Loops", tool: .autoSplit) { $0.showAutoSplit = true },
+        bind(char("k"), [], "K", "Set loop from selection", "Regions & Loops", tool: .setLoop) { $0.setLoopFromSelection() },
+        bind(char("k"), [.shift], "Shift K", "Clear loop", "Regions & Loops", tool: .clearLoop) { $0.clearLoop() },
+        bind(char("p"), [], "P", "Play loop", "Regions & Loops", tool: .playLoop) { $0.playLoop() },
         bind(char("p"), [.shift], "Shift P", "Play intro, then loop", "Regions & Loops") { $0.playLoop(withIntro: true) },
-        bind(char("j"), [], "J", "Hear the loop seam", "Regions & Loops") { $0.auditionSeam() },
-        bind(char("z"), [], "Z", "Snap loop to zero crossings", "Regions & Loops") { $0.snapLoopToZeroCrossings() },
-        bind(char("m"), [], "M", "Make loop seamless", "Regions & Loops") { $0.makeSeamlessLoop() },
+        bind(char("j"), [], "J", "Hear the loop seam", "Regions & Loops", tool: .seam) { $0.auditionSeam() },
+        bind(char("z"), [], "Z", "Snap loop to zero crossings", "Regions & Loops", tool: .snap) { $0.snapLoopToZeroCrossings() },
+        bind(char("m"), [], "M", "Make loop seamless", "Regions & Loops", tool: .seamless) { $0.makeSeamlessLoop() },
 
         // Game & view
-        bind(char("g"), [], "G", "Game preview (random pitch)", "Game & View") { $0.playGamePreview() },
-        bind(char("g"), [.shift], "Shift G", "Pitch variations...", "Game & View") { $0.showVariations = true },
+        bind(char("g"), [], "G", "Game preview (random pitch)", "Game & View", tool: .preview) { $0.playGamePreview() },
+        bind(char("g"), [.shift], "Shift G", "Pitch variations...", "Game & View", tool: .variations) { $0.showVariations = true },
         bind(char("w"), [], "W", "Waveform / spectrogram / both", "Game & View") { $0.cycleViewMode() },
         bind([], [.command], "Cmd = - 0", "Zoom in / out / fit", "Game & View", nil),
         bind(char("/") + char("?"), [.shift], "?", "Show keyboard shortcuts", "Game & View") { $0.showShortcuts = true },

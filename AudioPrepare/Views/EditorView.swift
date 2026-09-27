@@ -202,7 +202,8 @@ private struct EditBar: View {
         VStack(alignment: .leading, spacing: 8) {
             row("Cut") { cutButtons }
             row("Process") { processButtons }
-            row("Filter") { filterButtons }
+            row("Repair") { repairButtons }
+            row("Effects") { effectButtons }
             row("Loop") { loopButtons }
             row("Game") { gameButtons }
             HStack {
@@ -233,78 +234,80 @@ private struct EditBar: View {
 
     @ViewBuilder private var cutButtons: some View {
         Group {
-            Button("Trim to Selection", systemImage: "crop") { editor.trimToSelection() }
-                .help("Keep only the selected part (T)")
-            Button("Delete", systemImage: "scissors") { editor.deleteSelection() }
-                .help("Cut the selected part out (C or Delete)")
-            Button("Silence", systemImage: "speaker.slash") { editor.silenceSelection() }
-                .help("Replace the selection with silence (S)")
-            Button("Add Region", systemImage: "flag") { editor.addRegion() }
-                .help("Mark the selection as a region to export as its own file (R)")
+            ToolButton(.trim) { editor.trimToSelection() }
+            ToolButton(.cut) { editor.deleteSelection() }
+            ToolButton(.silence) { editor.silenceSelection() }
+            ToolButton(.addRegion) { editor.addRegion() }
         }
         .disabled(!editor.hasSelection)
-        Button("Trim Silence", systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right") { editor.trimSilence() }
-            .help("Remove silence (below -50 dB) from start and end (Shift T)")
+        ToolButton(.trimSilence) { editor.trimSilence() }
     }
 
     @ViewBuilder private var processButtons: some View {
         @Bindable var editor = editor
-        Button("Fade In", systemImage: "arrow.up.right") { editor.fadeIn() }
-            .help("Fade in over the selection, or the start of the file (I)")
-        Button("Fade Out", systemImage: "arrow.down.right") { editor.fadeOut() }
-            .help("Fade out over the selection, or the end of the file (O)")
+        ToolButton(.fadeIn) { editor.fadeIn() }
+        ToolButton(.fadeOut) { editor.fadeOut() }
         Picker("Fade", selection: $editor.fadeMs) {
             ForEach([10, 25, 50, 100, 250, 500, 1000, 2000], id: \.self) { Text("\($0) ms").tag($0) }
         }
         .labelsHidden()
         .fixedSize()
-        .help("Fade length when nothing is selected")
-        Button("Quieter", systemImage: "speaker.wave.1") { editor.applyGain(-editor.gainStepDb) }
-            .help("Lower the volume by the gain step (-)")
-        Button("Louder", systemImage: "speaker.wave.3") { editor.applyGain(editor.gainStepDb) }
-            .help("Raise the volume by the gain step (=)")
+        .toolTip(.fadeLength)
+        ToolButton(.quieter) { editor.applyGain(-editor.gainStepDb) }
+        ToolButton(.louder) { editor.applyGain(editor.gainStepDb) }
         Picker("Gain", selection: $editor.gainStepDb) {
             ForEach([1.0, 3.0, 6.0, 12.0], id: \.self) { Text("\(Int($0)) dB").tag($0) }
         }
         .labelsHidden()
         .fixedSize()
-        .help("Gain step")
-        Button("Normalize", systemImage: "waveform.badge.plus") { editor.normalize() }
-            .help("Raise peak to -1 dBFS (N)")
-        Button("Reverse", systemImage: "arrow.uturn.left") { editor.reverse() }
-            .help("Reverse the selection or the whole file (V)")
+        .toolTip(.gainStep)
+        ToolButton(.normalize) { editor.normalize() }
+        ToolButton(.reverse) { editor.reverse() }
     }
 
-    @ViewBuilder private var filterButtons: some View {
+    @ViewBuilder private var repairButtons: some View {
         @Bindable var editor = editor
-        Button("Low Cut", systemImage: "line.diagonal.arrow") { editor.applyFilter(.lowCut) }
-            .help("Remove rumble and hum below the frequency, 24 dB/octave (B)")
+        ToolButton(.lowCut) { editor.applyFilter(.lowCut) }
         Picker("Low cut frequency", selection: $editor.lowCutHz) {
             ForEach([40.0, 80, 120, 200, 400, 800], id: \.self) { Text(Self.hertz($0)).tag($0) }
         }
         .labelsHidden()
         .fixedSize()
-        Button("High Cut", systemImage: "line.diagonal") { editor.applyFilter(.highCut) }
-            .help("Remove hiss and harshness above the frequency, 24 dB/octave (H)")
+        .toolTip(.lowCutFrequency)
+        ToolButton(.highCut) { editor.applyFilter(.highCut) }
         Picker("High cut frequency", selection: $editor.highCutHz) {
             ForEach([2000.0, 4000, 6000, 8000, 12000, 16000], id: \.self) { Text(Self.hertz($0)).tag($0) }
         }
         .labelsHidden()
         .fixedSize()
+        .toolTip(.highCutFrequency)
+        ToolButton(.denoise) { editor.showDenoise = true }
+            .popover(isPresented: $editor.showDenoise, arrowEdge: .bottom) { DenoisePopover() }
+        ToolButton(.removeDC) { editor.removeDC() }
+        ToolButton(.mono) { editor.makeMono() }
+            .disabled((editor.clip?.channelCount ?? 1) < 2)
+    }
+
+    @ViewBuilder private var effectButtons: some View {
+        @Bindable var editor = editor
+        ToolButton(.pitchSpeed) { editor.showPitchSpeed = true }
+            .popover(isPresented: $editor.showPitchSpeed, arrowEdge: .bottom) { PitchSpeedPopover() }
+        ToolButton(.reverb) { editor.showReverb = true }
+            .popover(isPresented: $editor.showReverb, arrowEdge: .bottom) { ReverbPopover() }
+        ToolButton(.compress) { editor.showCompress = true }
+            .popover(isPresented: $editor.showCompress, arrowEdge: .bottom) { CompressPopover() }
     }
 
     @ViewBuilder private var gameButtons: some View {
         @Bindable var editor = editor
-        Button("Preview", systemImage: "gamecontroller") { editor.playGamePreview() }
-            .help("Play it 6 times with random pitch and volume, like the game would (G)")
+        ToolButton(.preview) { editor.playGamePreview() }
         Picker("Pitch spread", selection: $editor.pitchSpread) {
             ForEach([0.5, 1, 2, 3, 5], id: \.self) { Text(String(format: "±%g st", $0)).tag($0) }
         }
         .labelsHidden()
         .fixedSize()
-        .help("Random pitch range in semitones")
-        Button("Variations...", systemImage: "square.stack.3d.up") { editor.showVariations = true }
-            .help("Save several pitched copies (jump_01, jump_02, ...) into a project folder (Shift G)")
+        .toolTip(.pitchSpread)
+        ToolButton(.variations) { editor.showVariations = true }
         if let pitch = editor.player.previewPitch {
             Text(String(format: "%+.1f st", pitch))
                 .font(.caption.monospacedDigit())
@@ -318,32 +321,24 @@ private struct EditBar: View {
 
     @ViewBuilder private var loopButtons: some View {
         @Bindable var editor = editor
-        Button("Set", systemImage: "repeat") { editor.setLoopFromSelection() }
+        ToolButton(.setLoop) { editor.setLoopFromSelection() }
             .disabled(!editor.hasSelection)
-            .help("Use the selection as loop start and end (K)")
         Group {
-            Button("Play", systemImage: "repeat.circle") { editor.playLoop() }
-                .help("Repeat the loop (P). Shift P plays the intro first, like the game.")
-            Button("Seam", systemImage: "ear") { editor.auditionSeam() }
-                .help("Play the end of the loop into its start to check the join (J)")
-            Button("Snap", systemImage: "scope") { editor.snapLoopToZeroCrossings() }
-                .help("Move loop points to the nearest zero crossing to avoid clicks (Z)")
-            Button("Seamless", systemImage: "infinity") { editor.makeSeamlessLoop() }
-                .help("Crossfade the loop end into its start and trim the file to the loop (M)")
+            ToolButton(.playLoop) { editor.playLoop() }
+            ToolButton(.seam) { editor.auditionSeam() }
+            ToolButton(.snap) { editor.snapLoopToZeroCrossings() }
+            ToolButton(.seamless) { editor.makeSeamlessLoop() }
             Picker("Crossfade", selection: $editor.loopCrossfadeMs) {
                 ForEach([10, 50, 100, 250, 500, 1000, 2000], id: \.self) { Text("\($0) ms").tag($0) }
             }
             .labelsHidden()
             .fixedSize()
-            .help("Crossfade length for Make Seamless")
-            Button("Trim", systemImage: "crop") { editor.trimToLoop() }
-                .help("Cut everything outside the loop")
-            Button("Clear", systemImage: "xmark") { editor.clearLoop() }
-                .help("Remove the loop points (Shift K)")
+            .toolTip(.crossfade)
+            ToolButton(.trimToLoop) { editor.trimToLoop() }
+            ToolButton(.clearLoop) { editor.clearLoop() }
         }
         .disabled(editor.loop == nil)
-        Button(editor.tempo.map { String(format: "%g BPM", $0.bpm) } ?? "Tempo", systemImage: "metronome") { editor.showTempo = true }
-            .help("Detect BPM, show a beat grid, and make loops a whole number of bars")
+        ToolButton(.tempo, title: editor.tempo.map { String(format: "%g BPM", $0.bpm) }) { editor.showTempo = true }
             .popover(isPresented: $editor.showTempo, arrowEdge: .bottom) { TempoPopover() }
     }
 }
@@ -362,12 +357,10 @@ private struct RegionsPanel: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button("Auto-Split...", systemImage: "wand.and.rays") { editor.showAutoSplit = true }
-                    .help("Find separate sounds by silence and turn them into regions (Shift R)")
+                ToolButton(.autoSplit) { editor.showAutoSplit = true }
                     .popover(isPresented: $editor.showAutoSplit, arrowEdge: .bottom) { AutoSplitPopover() }
                 if !editor.regions.isEmpty {
-                    Button("Save as Sounds...", systemImage: "square.split.2x1") { editor.showSaveRegions = true }
-                        .help("Save each region as its own WAV in a project folder")
+                    ToolButton(.saveRegions) { editor.showSaveRegions = true }
                     Button("Remove All", role: .destructive) { editor.removeAllRegions() }
                 }
             }
@@ -581,5 +574,198 @@ private struct TempoPopover: View {
         guard let bpm = Double(bpmText.replacingOccurrences(of: ",", with: ".")) else { return }
         editor.setBPM(bpm)
         message = nil
+    }
+}
+
+// MARK: - Repair and effect popovers
+
+/// Shared footer: what the tool will process and an Apply button.
+private struct ApplyFooter: View {
+    @Environment(EditorModel.self) private var editor
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        HStack {
+            Text(editor.hasSelection ? "Applies to the selection." : "Applies to the whole sound.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button(title, action: action)
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+        }
+    }
+}
+
+private struct DenoisePopover: View {
+    @Environment(EditorModel.self) private var editor
+    @AppStorage("denoiseReduction") private var reduction = 18.0
+    @AppStorage("denoiseSensitivity") private var sensitivity = 1.5
+
+    var body: some View {
+        Form {
+            Section {
+                HStack {
+                    if let profile = editor.noiseProfile {
+                        Label(String(format: "Learned noise (%.1f s)", profile.seconds), systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Spacer()
+                        Button("Forget") { editor.clearNoiseProfile() }
+                    } else {
+                        Label("Automatic: uses the quietest parts", systemImage: "sparkles")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                }
+                Button("Learn Noise from Selection", systemImage: EditorTool.learnNoise.icon) { editor.learnNoise() }
+                    .disabled(!editor.hasSelection)
+                    .toolTip(.learnNoise)
+            } header: {
+                Text("Denoise")
+            } footer: {
+                Text("For the best result, select a moment with only background noise and learn it first.")
+            }
+            Section {
+                slider("Reduction", value: $reduction, in: 6...36, step: 1, format: "%.0f dB")
+                slider("Sensitivity", value: $sensitivity, in: 1...3, step: 0.1, format: "%.1f×")
+                Text("Higher sensitivity removes more noise but can make the sound dull or watery.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ApplyFooter(title: "Denoise") {
+                    editor.denoise(reductionDb: reduction, sensitivity: sensitivity)
+                    editor.showDenoise = false
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 400)
+    }
+}
+
+private struct PitchSpeedPopover: View {
+    @Environment(EditorModel.self) private var editor
+    @State private var semitones = 0.0
+    @State private var speed = 1.0
+    @State private var tape = false
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("Mode", selection: $tape) {
+                    Text("Independent").tag(false)
+                    Text("Tape").tag(true)
+                }
+                .pickerStyle(.segmented)
+                if !tape {
+                    slider("Pitch", value: $semitones, in: -12...12, step: 0.5, format: "%+.1f st")
+                }
+                slider("Speed", value: $speed, in: 0.5...2, step: 0.05, format: "%.2f×")
+                if let clip = editor.clip {
+                    let seconds = Double(editor.hasSelection ? editor.editRange.count : clip.frameCount) / clip.sampleRate
+                    Text(String(format: "Length %.2f s → %.2f s", seconds, seconds / speed))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Pitch & Speed")
+            } footer: {
+                Text(tape ? "Tape: pitch and speed change together, like Godot's pitch_scale." : "Independent: change pitch without changing length, or length without changing pitch.")
+            }
+            Section {
+                HStack {
+                    Button("Reset") {
+                        semitones = 0
+                        speed = 1
+                    }
+                    Spacer()
+                }
+                ApplyFooter(title: "Apply") {
+                    editor.pitchSpeed(semitones: tape ? 0 : semitones, speed: speed, tape: tape)
+                    editor.showPitchSpeed = false
+                }
+                .disabled(speed == 1 && (tape || semitones == 0))
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 400)
+    }
+}
+
+private struct ReverbPopover: View {
+    @Environment(EditorModel.self) private var editor
+    @AppStorage("reverbPreset") private var preset: ReverbPreset = .mediumRoom
+    @AppStorage("reverbMix") private var mix = 25.0
+    @AppStorage("reverbTail") private var addTail = true
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("Space", selection: $preset) {
+                    ForEach(ReverbPreset.allCases) { Text($0.title).tag($0) }
+                }
+                slider("Wet", value: $mix, in: 0...100, step: 1, format: "%.0f%%")
+                Toggle("Add a 2.5 s tail so the decay isn't cut", isOn: $addTail)
+                    .disabled(editor.hasSelection)
+            } header: {
+                Text("Reverb")
+            } footer: {
+                Text(editor.hasSelection ? "On a selection the length stays the same, so the tail is cut at the selection end." : "Small rooms suit footsteps and UI; halls and cathedrals suit impacts, magic and music.")
+            }
+            Section {
+                ApplyFooter(title: "Add Reverb") {
+                    editor.reverb(preset: preset, mix: mix, addTail: addTail)
+                    editor.showReverb = false
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 400)
+    }
+}
+
+private struct CompressPopover: View {
+    @Environment(EditorModel.self) private var editor
+    @State private var settings = CompressorSettings.punchy
+
+    var body: some View {
+        Form {
+            Section {
+                HStack {
+                    Button("Gentle") { settings = .gentle }
+                    Button("Punchy") { settings = .punchy }
+                    Button("Limiter") { settings = .limiter }
+                }
+                .buttonStyle(.bordered)
+                slider("Threshold", value: $settings.thresholdDb, in: -40...0, step: 1, format: "%.0f dB")
+                slider("Ratio", value: $settings.ratio, in: 1...20, step: 0.5, format: "%.1f:1")
+                slider("Attack", value: $settings.attackMs, in: 0.5...100, step: 0.5, format: "%.1f ms")
+                slider("Release", value: $settings.releaseMs, in: 10...1000, step: 10, format: "%.0f ms")
+                slider("Makeup", value: $settings.makeupDb, in: 0...18, step: 0.5, format: "%+.1f dB")
+            } header: {
+                Text("Compress")
+            } footer: {
+                Text("Parts louder than the threshold are turned down by the ratio; makeup gain brings the whole sound back up. Follow with Normalize to avoid clipping.")
+            }
+            Section {
+                ApplyFooter(title: "Compress") {
+                    editor.compress(settings)
+                    editor.showCompress = false
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 420)
+    }
+}
+
+private func slider(_ title: String, value: Binding<Double>, in range: ClosedRange<Double>, step: Double, format: String) -> some View {
+    LabeledContent(title) {
+        HStack {
+            Slider(value: value, in: range, step: step)
+            Text(String(format: format, value.wrappedValue))
+                .monospacedDigit()
+                .frame(width: 64, alignment: .trailing)
+        }
     }
 }
