@@ -11,6 +11,7 @@ struct WaveformDrawState: Equatable {
     var viewLength: Double
     var regions: [Region]
     var loop: Range<Int>?
+    var splitPreview: [Range<Int>]
 }
 
 struct WaveformView: NSViewRepresentable {
@@ -110,6 +111,21 @@ final class WaveformNSView: NSView {
                     withAttributes: [.font: NSFont.systemFont(ofSize: 10, weight: .semibold), .foregroundColor: NSColor.white]
                 )
                 NSGraphicsContext.restoreGraphicsState()
+            }
+        }
+
+        if !model.splitPreview.isEmpty {
+            NSColor.systemYellow.withAlphaComponent(0.12).setFill()
+            NSColor.systemYellow.withAlphaComponent(0.8).setStroke()
+            for range in model.splitPreview {
+                let x0 = x(for: range.lowerBound)
+                let x1 = x(for: range.upperBound)
+                guard x1 >= 0, x0 <= bounds.width else { continue }
+                let box = NSRect(x: x0, y: wave.minY + 1, width: max(x1 - x0, 1), height: wave.height - 2)
+                box.fill()
+                let path = NSBezierPath(rect: box)
+                path.setLineDash([4, 3], count: 2, phase: 0)
+                path.stroke()
             }
         }
 

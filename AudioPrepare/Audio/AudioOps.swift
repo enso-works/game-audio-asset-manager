@@ -123,6 +123,67 @@ enum AudioOps {
         return AudioClip(channels: channels, sampleRate: clip.sampleRate)
     }
 
+    /// Finds separate sounds: stretches louder than the threshold, where gaps shorter than
+    /// `minSilenceMs` don't split a sound and blips shorter than `minSoundMs` are ignored.
+    static func detectSounds(
+        _ clip: AudioClip,
+        thresholdDb: Double,
+        minSilenceMs: Int,
+        minSoundMs: Int,
+        paddingMs: Int
+    ) -> [Range<Int>] {
+        let n = clip.frameCount
+        let window = max(1, clip.frames(forMilliseconds: 5))
+        let windows = (n + window - 1) / window
+        guard windows > 0 else { return [] }
+        let threshold = Float(pow(10, thresholdDb / 20))
+
+        var loud = [Bool](repeating: false, count: windows)
+        for channel in clip.channels {
+            channel.withUnsafeBufferPointer { pointer in
+                for w in 0..<windows where !loud[w] {
+                    let start = w * window
+                    var peak: Float = 0
+                    vDSP_maxmgv(pointer.baseAddress! + start, 1, &peak, vDSP_Length(min(window, n - start)))
+                    loud[w] = peak > threshold
+                }
+            }
+        }
+
+        var segments: [Range<Int>] = []
+        var current: Int?
+        for w in 0..<windows {
+            if loud[w] {
+                if current == nil { current = w }
+            } else if let start = current {
+                segments.append(start..<w)
+                current = nil
+            }
+        }
+        if let start = current { segments.append(start..<windows) }
+
+        let minGap = max(1, clip.frames(forMilliseconds: minSilenceMs) / window)
+        var merged: [Range<Int>] = []
+        for segment in segments {
+            if let last = merged.last, segment.lowerBound - last.upperBound < minGap {
+                merged[merged.count - 1] = last.lowerBound..<segment.upperBound
+            } else {
+                merged.append(segment)
+            }
+        }
+
+        let minLength = clip.frames(forMilliseconds: minSoundMs)
+        let padding = clip.frames(forMilliseconds: paddingMs)
+        var result: [Range<Int>] = []
+        for segment in merged where segment.count * window >= minLength {
+            var start = max(0, segment.lowerBound * window - padding)
+            let end = min(n, segment.upperBound * window + padding)
+            if let previous = result.last { start = max(start, previous.upperBound) }
+            if end > start { result.append(start..<end) }
+        }
+        return result
+    }
+
     /// 4th-order Butterworth filter (24 dB/octave), built from two cascaded biquads.
     static func filter(_ clip: AudioClip, _ range: Range<Int>, kind: FilterKind, frequency: Double) -> AudioClip {
         let cutoff = min(max(frequency, 10), clip.sampleRate * 0.45)

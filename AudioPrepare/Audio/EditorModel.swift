@@ -27,6 +27,8 @@ final class EditorModel {
     private(set) var regions: [Region] = []
     /// Loop points in frames; exported as WAV loop markers and in the manifest.
     private(set) var loop: Range<Int>?
+    /// Sounds found by auto-split, shown on the waveform before they become regions.
+    var splitPreview: [Range<Int>] = []
     /// Where the sound came from (YouTube link, title, channel), shown for attribution.
     private(set) var source: SoundMeta?
     private(set) var viewStart: Double = 0
@@ -507,6 +509,23 @@ final class EditorModel {
             colorIndex: regionCounter - 1
         )
         changeRegions("Add Region") { $0.append(region) }
+    }
+
+    /// Turns detected sounds into regions named prefix_01, prefix_02, ...
+    func createRegions(from ranges: [Range<Int>], prefix: String, replace: Bool) {
+        guard !ranges.isEmpty else { return }
+        let base = Exporter.sanitize(prefix.isEmpty ? "sound" : prefix)
+        let start = replace ? 0 : regions.count
+        let new = ranges.enumerated().map { index, range in
+            Region(id: UUID(), name: String(format: "%@_%02d", base, start + index + 1),
+                   start: range.lowerBound, end: range.upperBound, colorIndex: start + index)
+        }
+        regionCounter = start + new.count
+        changeRegions("Auto-Split") { regions in
+            if replace { regions.removeAll() }
+            regions.append(contentsOf: new)
+        }
+        splitPreview = []
     }
 
     func renameRegion(_ id: Region.ID, to name: String) {

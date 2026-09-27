@@ -216,7 +216,8 @@ private struct WaveformPanel: View {
             viewStart: editor.viewStart,
             viewLength: editor.viewLength,
             regions: editor.regions,
-            loop: editor.loop
+            loop: editor.loop,
+            splitPreview: editor.splitPreview
         )
         VStack(spacing: 6) {
             WaveformView(model: editor, mode: .overview, state: state)
@@ -366,6 +367,7 @@ private struct RegionsPanel: View {
     @Environment(EditorModel.self) private var editor
     @State private var renaming: Region?
     @State private var newName = ""
+    @State private var showAutoSplit = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -375,6 +377,9 @@ private struct RegionsPanel: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
+                Button("Auto-Split...", systemImage: "wand.and.rays") { showAutoSplit = true }
+                    .help("Find separate sounds by silence and turn them into regions")
+                    .popover(isPresented: $showAutoSplit, arrowEdge: .bottom) { AutoSplitPopover() }
                 if !editor.regions.isEmpty {
                     Button("Save as Sounds...", systemImage: "square.split.2x1") { editor.showSaveRegions = true }
                         .help("Save each region as its own WAV in a project folder")
@@ -383,7 +388,7 @@ private struct RegionsPanel: View {
             }
             .controlSize(.small)
             if editor.regions.isEmpty {
-                Text("Select a sound in the waveform and press R to mark it. Use this to cut many sounds out of one long recording, then export them all at once.")
+                Text("Select a sound in the waveform and press R to mark it, or use Auto-Split to find every sound in a pack. Then save them as separate sounds or export them all at once.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -445,5 +450,74 @@ private struct CompactLabelStyle: LabelStyle {
             configuration.icon
             configuration.title.fixedSize()
         }
+    }
+}
+
+/// Detects sounds separated by silence, previews them on the waveform, then creates regions.
+private struct AutoSplitPopover: View {
+    @Environment(EditorModel.self) private var editor
+    @AppStorage("splitThreshold") private var threshold = -40.0
+    @AppStorage("splitMinSilence") private var minSilence = 150.0
+    @AppStorage("splitMinSound") private var minSound = 60.0
+    @AppStorage("splitPadding") private var padding = 20.0
+    @State private var prefix = "sound"
+    @State private var replace = true
+
+    var body: some View {
+        Form {
+            Section {
+                slider("Threshold", value: $threshold, in: -70 ... -15, step: 1, unit: "dB",
+                       help: "Anything quieter counts as silence")
+                slider("Min silence", value: $minSilence, in: 30...1500, step: 10, unit: "ms",
+                       help: "Shorter gaps stay inside one sound")
+                slider("Min sound", value: $minSound, in: 10...1000, step: 10, unit: "ms",
+                       help: "Shorter blips are ignored")
+                slider("Padding", value: $padding, in: 0...300, step: 5, unit: "ms",
+                       help: "Extra room kept before and after each sound")
+            } header: {
+                Text("Auto-Split")
+            } footer: {
+                Text("Found \(editor.splitPreview.count) sound\(editor.splitPreview.count == 1 ? "" : "s"), outlined in yellow on the waveform.")
+            }
+            Section {
+                TextField("Name prefix", text: $prefix)
+                Toggle("Replace existing regions", isOn: $replace)
+                Button("Create \(editor.splitPreview.count) Regions") {
+                    editor.createRegions(from: editor.splitPreview, prefix: prefix, replace: replace)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(editor.splitPreview.isEmpty)
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 420)
+        .onAppear {
+            prefix = Exporter.sanitize(editor.fileName).split(separator: "_").prefix(2).joined(separator: "_")
+            detect()
+        }
+        .onDisappear { editor.splitPreview = [] }
+        .onChange(of: threshold) { detect() }
+        .onChange(of: minSilence) { detect() }
+        .onChange(of: minSound) { detect() }
+        .onChange(of: padding) { detect() }
+    }
+
+    private func slider(_ title: String, value: Binding<Double>, in range: ClosedRange<Double>, step: Double, unit: String, help: String) -> some View {
+        LabeledContent(title) {
+            HStack {
+                Slider(value: value, in: range, step: step)
+                Text("\(Int(value.wrappedValue)) \(unit)")
+                    .monospacedDigit()
+                    .frame(width: 64, alignment: .trailing)
+            }
+        }
+        .help(help)
+    }
+
+    private func detect() {
+        guard let clip = editor.clip else { return }
+        editor.splitPreview = AudioOps.detectSounds(
+            clip, thresholdDb: threshold, minSilenceMs: Int(minSilence), minSoundMs: Int(minSound), paddingMs: Int(padding)
+        )
     }
 }
