@@ -12,6 +12,7 @@ brew install yt-dlp ffmpeg xcodegen
 
 ```sh
 make run       # generate the Xcode project, build Release, launch
+make test      # run the unit tests
 make install   # copy to /Applications
 ```
 
@@ -48,9 +49,13 @@ Processing applies to the selection, or to the whole sound when nothing is selec
 
 ## Export
 
-- **Export Project** (Shift Cmd E, or the button at the bottom of the sidebar) converts every sound into the game folder, recreating the project folders. Each folder has its own format (subfolders inherit), e.g. `sfx` as WAV and `music` as OGG. "Only export changed sounds" makes re-exports fast.
-  - `audio_manifest.json`: sound key to file, duration and loop points.
+- **Export Project** (Shift Cmd E, or the button at the bottom of the sidebar) converts every sound into the game folder, recreating the project folders. Each folder has its own format (subfolders inherit), e.g. `sfx` as WAV and `music` as OGG. "Only export changed sounds" makes re-exports fast, and **auto-export** re-exports whenever you save a sound, so a running game or dev server picks changes up.
+- **Generated files** (in the export folder):
+  - `audio_manifest.json`: every sound with file, duration, loop points, BPM, sprite offsets, plus variation **groups** (`jump_01`, `jump_02` ... become `"sfx/jump"`).
   - `CREDITS.md`: YouTube sources for attribution.
+  - `sounds.gd`: a Godot `Sounds` class with preloaded streams, `Sounds.random("sfx/jump")`, `Sounds.get_stream(key)`, and loop settings for OGG/MP3 applied on load. Uses `res://` paths when the export folder is inside a Godot project.
+  - `sounds.ts`: typed sound keys and groups for three.js; unknown keys fail to compile. `pickVariant("sfx/jump")` picks a variation.
+- **Audio sprites** (folder toggle): packs a folder into one file plus `<name>.sprite.json` (Howler.js format, with seconds for three.js), so the browser loads one file instead of dozens.
 - **Export** (Cmd E) exports the open sound, its selection, or each region.
 - **Batch Convert** (sidebar) converts any folder of audio files with one preset, keeping subfolders.
 
@@ -71,13 +76,14 @@ Select the part that should repeat and press **K** (Set Loop). Then:
 
 In the game:
 
-- **Godot 4**: WAV exports carry the loop points in a `smpl` chunk, so they loop automatically (Import dock Loop Mode: Detect From WAV). For OGG, tick Loop and set Loop Offset in the Import dock.
+- **Godot 4**: WAV exports carry the loop points in a `smpl` chunk, so they loop automatically (Import dock Loop Mode: Detect From WAV). OGG/MP3 exports are cut at the loop end and the generated `sounds.gd` sets `loop` and `loop_offset`; without it, tick Loop and set Loop Offset in the Import dock.
 - **three.js**: read the manifest:
 
 ```js
-const manifest = await (await fetch('/audio/audio_manifest.json')).json();
-const info = manifest.sounds['music/theme'];
-new THREE.AudioLoader().load('/audio/' + info.file, (buffer) => {
+import { sounds } from './audio/sounds'; // generated, typed keys
+
+const info = sounds['music/theme'];
+new THREE.AudioLoader().load('/audio/' + info.url, (buffer) => {
   sound.setBuffer(buffer);
   sound.setLoop(info.loop);
   if (info.loop) {
