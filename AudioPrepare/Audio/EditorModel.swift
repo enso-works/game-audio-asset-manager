@@ -83,6 +83,12 @@ final class EditorModel {
     var showVariations = false
     var showAutoSplit = false
     var showTempo = false
+    var showDenoise = false
+    var showPitchSpeed = false
+    var showReverb = false
+    var showCompress = false
+    /// Background noise learned from a selection; kept across files so one take can clean another.
+    private(set) var noiseProfile: NoiseProfile?
     var showShortcuts = false
     /// Copied audio, shared across files so sounds can be combined.
     static var clipboard: AudioClip?
@@ -491,6 +497,90 @@ final class EditorModel {
         let range = editRange
         let frequency = kind == .lowCut ? lowCutHz : highCutHz
         perform(kind == .lowCut ? "Low Cut" : "High Cut") { AudioOps.filter($0, range, kind: kind, frequency: frequency) }
+    }
+
+    // MARK: - Repair and effects
+
+    /// Learns the selection as background noise for Denoise.
+    func learnNoise() {
+        guard let clip, let selection, selection.count > Denoiser.fftSize else {
+            errorMessage = "Select at least 50 ms of background noise (no wanted sound) first."
+            return
+        }
+        noiseProfile = Denoiser.profile(clip, selection)
+    }
+
+    func clearNoiseProfile() {
+        noiseProfile = nil
+    }
+
+    func denoise(reductionDb: Double, sensitivity: Double) {
+        let range = editRange
+        let profile = noiseProfile
+        perform("Denoise") { Denoiser.denoise($0, range, profile: profile, reductionDb: reductionDb, sensitivity: sensitivity) }
+    }
+
+    /// Removes a constant offset with a 10 Hz high-pass (safe for long files, unlike subtracting the mean).
+    func removeDC() {
+        let range = editRange
+        perform("Remove DC") { AudioOps.filter($0, range, kind: .lowCut, frequency: 10) }
+    }
+
+    func makeMono() {
+        guard let clip, clip.channelCount > 1 else { return }
+        perform("Make Mono") { $0.conformed(sampleRate: $0.sampleRate, channelCount: 1) }
+    }
+
+    func compress(_ settings: CompressorSettings) {
+        let range = editRange
+        perform("Compress") { Effects.compress($0, range, settings: settings) }
+    }
+
+    func pitchSpeed(semitones: Double, speed: Double, tape: Bool) {
+        let range = editRange
+        replaceRange("Pitch & Speed", range, stretch: true) { Effects.pitchSpeed($0, range, semitones: semitones, speed: speed, tape: tape) }
+    }
+
+    /// Reverb on the selection keeps its length; on the whole sound the tail can extend the file.
+    func reverb(preset: ReverbPreset, mix: Double, addTail: Bool) {
+        let range = editRange
+        let tail = addTail && !hasSelection ? 2.5 : 0
+        replaceRange("Reverb", range, stretch: false) { Effects.reverb($0, range, preset: preset, mix: mix, tail: tail) }
+    }
+
+    /// Replaces a range with processed audio of possibly different length. Regions, the loop and
+    /// the tempo grid follow: stretched with a speed change, shifted after a longer range.
+    private func replaceRange(_ name: String, _ range: Range<Int>, stretch: Bool, _ render: @escaping @Sendable (AudioClip) -> AudioClip?) {
+        guard let clip else { return }
+        let rate = clip.sampleRate
+        let source = clip
+        let lengthBox = LengthBox()
+        perform(name, { source in
+            guard let processed = render(source) else { return source }
+            lengthBox.value = processed.frameCount
+            return AudioOps.replace(source, range, with: processed)
+        }) { s in
+            let count = lengthBox.value ?? range.count
+            guard count != range.count else { return }
+            let map = RegionMath.replacing(range, count: count, stretch: stretch)
+            s.regions = s.regions.compactMap { region in
+                var moved = region
+                moved.start = map(region.start)
+                moved.end = map(region.end)
+                return moved.end > moved.start ? moved : nil
+            }
+            s.loop = s.loop.flatMap { loop in
+                let moved = map(loop.lowerBound)..<map(loop.upperBound)
+                return moved.isEmpty ? nil : moved
+            }
+            // A speed change over the whole sound changes its tempo too.
+            if stretch, range == 0..<source.frameCount, let tempo = s.tempo {
+                let factor = Double(range.count) / Double(count)
+                s.tempo = TempoInfo(bpm: (tempo.bpm * factor * 10).rounded() / 10, offset: tempo.offset / factor, beatsPerBar: tempo.beatsPerBar)
+            }
+            if s.selection != nil { s.selection = range.lowerBound..<(range.lowerBound + count) }
+            _ = rate
+        }
     }
 
     func normalize(targetDb: Double = -1) {
@@ -925,4 +1015,9 @@ final class EditorModel {
         guard viewLength < Double(frameCount), p < viewStart || p > viewStart + viewLength else { return }
         setView(start: p - viewLength * 0.05, length: viewLength)
     }
+}
+
+/// Carries the processed length out of the background transform.
+private final class LengthBox: @unchecked Sendable {
+    var value: Int?
 }

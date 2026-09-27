@@ -112,3 +112,19 @@ final class RegionMathTests: XCTestCase {
         XCTAssertEqual(RegionMath.insert(10..<20, at: 20, count: 3), 10..<20)
     }
 }
+
+final class ReplaceMappingTests: XCTestCase {
+    func testStretchScalesInsideAndShiftsAfter() {
+        let map = RegionMath.replacing(100..<200, count: 50, stretch: true)
+        XCTAssertEqual(map(50), 50)
+        XCTAssertEqual(map(150), 125)
+        XCTAssertEqual(map(200), 150)
+        XCTAssertEqual(map(300), 250)
+    }
+
+    func testTailKeepsPositions() {
+        let map = RegionMath.replacing(0..<1000, count: 1500, stretch: false)
+        XCTAssertEqual(map(400), 400)
+        XCTAssertEqual(map(1000), 1000)
+    }
+}

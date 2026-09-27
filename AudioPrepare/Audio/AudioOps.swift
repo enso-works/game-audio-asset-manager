@@ -272,6 +272,17 @@ enum RegionMath {
         return r
     }
 
+    /// Maps positions when `range` is replaced by audio of `count` frames. With `stretch` (speed
+    /// change) positions inside the range scale with it; otherwise they stay (e.g. a reverb tail).
+    static func replacing(_ range: Range<Int>, count: Int, stretch: Bool) -> (Int) -> Int {
+        { x in
+            if x < range.lowerBound { return x }
+            if x > range.upperBound { return x + count - range.count }
+            guard stretch else { return min(x, range.lowerBound + count) }
+            return range.lowerBound + Int((Double(x - range.lowerBound) * Double(count) / Double(max(range.count, 1))).rounded())
+        }
+    }
+
     static func delete(_ range: Range<Int>?, _ removed: Range<Int>) -> Range<Int>? {
         guard let range else { return nil }
         func map(_ x: Int) -> Int {
