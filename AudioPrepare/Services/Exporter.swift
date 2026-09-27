@@ -153,6 +153,10 @@ enum Exporter {
             // Downmix before measuring so mono exports hit the loudness target too.
             filters.append("aformat=channel_layouts=\(settings.channels == 1 ? "mono" : "stereo")")
         }
+        if let loop, settings.format != .wav {
+            // Godot loops OGG/MP3 from the end of the file back to loop_offset, so the file must end at the loop end.
+            filters.append(String(format: "atrim=end=%.6f", loop.end))
+        }
         if let target = settings.loudness, let measured = await measureLoudness(input, filters: filters, ffmpeg: ffmpeg) {
             // A fixed gain keeps the sound's dynamics; the cap keeps true peaks at or below -1 dBTP.
             let gain = min(target - measured.integrated, -1 - measured.truePeak)
@@ -247,7 +251,7 @@ enum Exporter {
     static func loopNote(for format: ExportFormat) -> String {
         switch format {
         case .wav: "Loop points are embedded in the WAV. Godot 4 loops it automatically (Loop Mode: Detect From WAV)."
-        case .ogg: "OGG can't carry loop points Godot reads: tick Loop and set Loop Offset in Godot's Import dock, or export WAV. For three.js, use the manifest's loopStart/loopEnd."
+        case .ogg: "OGG can't carry loop points: the file is cut at the loop end, and the generated sounds.gd (or Godot's Import dock) sets Loop and Loop Offset. For three.js, use the manifest's loopStart/loopEnd."
         case .mp3: "MP3 adds silence at the start and end, so loops click. Use OGG or WAV for loops."
         }
     }
