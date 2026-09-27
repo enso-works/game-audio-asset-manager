@@ -139,6 +139,7 @@ struct ProjectExportView: View {
             progress = (done, total)
         }
         report = result
+        library.recordExport(result.succeeded)
         running = false
         replan()
     }

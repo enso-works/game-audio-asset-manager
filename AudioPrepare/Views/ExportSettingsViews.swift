@@ -8,7 +8,7 @@ struct ExportSettingsEditor: View {
     var body: some View {
         HStack {
             ForEach(ExportPreset.allCases) { preset in
-                Button(preset.title) { settings = preset.settings }
+                Button(preset.title) { settings = settings.applying(preset) }
                     .buttonStyle(.bordered)
                     .tint(settings.preset == preset ? .accentColor : nil)
             }
@@ -44,9 +44,19 @@ struct ExportSettingsEditor: View {
                 ForEach([96, 128, 160, 192, 256, 320], id: \.self) { Text("\($0) kbps").tag($0) }
             }
         }
+        Picker("Loudness", selection: $settings.loudness) {
+            Text("Off").tag(Double?.none)
+            ForEach([-12.0, -14, -16, -18, -20, -23], id: \.self) { Text(String(format: "%g LUFS", $0)).tag(Double?.some($0)) }
+        }
+        .help("Match every sound to the same perceived loudness. Around -16 LUFS for SFX, -20 for music and ambience.")
         Text(settings.preset?.note ?? "Custom settings.")
             .font(.caption)
             .foregroundStyle(.secondary)
+        if settings.loudness != nil {
+            Text("Loudness is measured per sound (EBU R128) and matched with a fixed gain, so dynamics stay intact. Peaks are capped at -1 dBTP to avoid clipping.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 
     private static func oggKbps(_ quality: Int) -> Int {
@@ -73,7 +83,9 @@ struct FolderSettingsControl: View {
                     Divider()
                 }
                 ForEach(ExportPreset.allCases) { preset in
-                    Button(preset.title) { library.setSettings(preset.settings, forFolder: folder) }
+                    Button(preset.title) {
+                        library.setSettings(library.settings(forFolder: folder).applying(preset), forFolder: folder)
+                    }
                 }
                 Divider()
                 Button("Custom...") { editingCustom = true }

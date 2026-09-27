@@ -31,6 +31,8 @@ struct ProjectConfig: Codable {
     /// Export settings per folder path relative to the project; subfolders inherit.
     var folderSettings: [String: ExportSettings] = [:]
     var sounds: [String: SoundMeta] = [:]
+    /// Settings each sound was last exported with, so format or loudness changes count as changed.
+    var lastExport: [String: ExportSettings]?
 
     static let folderName = ".audioprepare"
     static let fileName = "project.json"

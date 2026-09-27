@@ -251,7 +251,9 @@ final class Library {
 
     func removeMeta(for url: URL) {
         guard let path = relativePath(url) else { return }
-        config.sounds = config.sounds.filter { $0.key != path && !$0.key.hasPrefix(path + "/") }
+        let removed: (String) -> Bool = { $0 == path || $0.hasPrefix(path + "/") }
+        config.sounds = config.sounds.filter { !removed($0.key) }
+        config.lastExport = config.lastExport?.filter { !removed($0.key) }
         saveConfig()
     }
 
@@ -301,6 +303,19 @@ final class Library {
         } else {
             config.folderSettings[path] = settings
         }
+        saveConfig()
+    }
+
+    func lastExportSettings(for url: URL) -> ExportSettings? {
+        relativePath(url).flatMap { config.lastExport?[$0] }
+    }
+
+    func recordExport(_ exported: [(URL, ExportSettings)]) {
+        var record = config.lastExport ?? [:]
+        for (url, settings) in exported {
+            if let path = relativePath(url) { record[path] = settings }
+        }
+        config.lastExport = record
         saveConfig()
     }
 

@@ -14,6 +14,8 @@ struct ExportSettings: Equatable, Codable {
     var wavBitDepth = 16
     var oggQuality = 6
     var mp3Bitrate = 192
+    /// Target integrated loudness in LUFS; nil leaves levels alone.
+    var loudness: Double?
 
     private static let key = "exportSettings"
 
@@ -26,11 +28,22 @@ struct ExportSettings: Equatable, Codable {
         }
         let channelText = channels == 1 ? "Mono" : channels == 2 ? "Stereo" : "Keep channels"
         let rateText = sampleRate == 0 ? "Keep rate" : String(format: "%g kHz", Double(sampleRate) / 1000)
-        return "\(format.label) \(quality) · \(channelText) · \(rateText)"
+        let loudnessText = loudness.map { String(format: " · %g LUFS", $0) } ?? ""
+        return "\(format.label) \(quality) · \(channelText) · \(rateText)\(loudnessText)"
     }
 
+    /// The matching preset, ignoring loudness (which is set independently).
     var preset: ExportPreset? {
-        ExportPreset.allCases.first { $0.settings == self }
+        var plain = self
+        plain.loudness = nil
+        return ExportPreset.allCases.first { $0.settings == plain }
+    }
+
+    /// Applies a preset's format settings but keeps the loudness target.
+    func applying(_ preset: ExportPreset) -> ExportSettings {
+        var result = preset.settings
+        result.loudness = loudness
+        return result
     }
 
     static func load() -> ExportSettings {
@@ -92,8 +105,10 @@ struct ConvertTask: Sendable {
 
 struct ConvertFailure: Sendable, Identifiable {
     let id = UUID()
-    let file: String
+    let input: URL?
     let message: String
+
+    var file: String { input?.lastPathComponent ?? "ffmpeg" }
 }
 
 struct ExportJob: Sendable {
@@ -131,10 +146,21 @@ enum Exporter {
         return args
     }
 
-    /// Converts one file with ffmpeg and embeds loop points when the target is WAV.
+    /// Converts one file with ffmpeg: optional loudness matching, then encoding, then WAV loop points.
     static func convert(_ input: URL, to output: URL, settings: ExportSettings, loop: LoopPoints?, ffmpeg: URL) async throws {
+        var filters: [String] = []
+        if settings.channels > 0 {
+            // Downmix before measuring so mono exports hit the loudness target too.
+            filters.append("aformat=channel_layouts=\(settings.channels == 1 ? "mono" : "stereo")")
+        }
+        if let target = settings.loudness, let measured = await measureLoudness(input, filters: filters, ffmpeg: ffmpeg) {
+            // A fixed gain keeps the sound's dynamics; the cap keeps true peaks at or below -1 dBTP.
+            let gain = min(target - measured.integrated, -1 - measured.truePeak)
+            filters.append(String(format: "volume=%.2fdB", gain))
+        }
         let log = LogTail()
         let arguments = ["-y", "-v", "error", "-i", input.path, "-vn", "-map_metadata", "-1"]
+            + (filters.isEmpty ? [] : ["-af", filters.joined(separator: ",")])
             + codecArguments(settings) + [output.path]
         let status = try await ProcessRunner().run(ffmpeg, arguments) { log.append($0) }
         guard status == 0 else {
@@ -145,6 +171,29 @@ enum Exporter {
         }
     }
 
+    /// Integrated loudness (LUFS) and true peak (dBTP) via ffmpeg's EBU R128 meter. Sounds shorter
+    /// than the meter's 400 ms window read as -inf, so those are measured looped.
+    static func measureLoudness(_ input: URL, filters: [String], ffmpeg: URL) async -> (integrated: Double, truePeak: Double)? {
+        for looped in [false, true] {
+            var arguments = ["-hide_banner", "-nostats"]
+            if looped { arguments += ["-stream_loop", "50"] }
+            arguments += ["-i", input.path, "-vn", "-af", (filters + ["loudnorm=print_format=json"]).joined(separator: ",")]
+            if looped { arguments += ["-t", "8"] }
+            arguments += ["-f", "null", "-"]
+            let log = LogTail(limit: 40)
+            guard (try? await ProcessRunner().run(ffmpeg, arguments) { log.append($0) }) == 0 else { return nil }
+            func value(_ key: String) -> Double? {
+                guard let line = log.all.last(where: { $0.contains("\"\(key)\"") }) else { return nil }
+                let parts = line.split(separator: "\"")
+                return parts.count >= 4 ? Double(parts[3]) : nil
+            }
+            if let integrated = value("input_i"), integrated.isFinite, integrated > -70, let peak = value("input_tp") {
+                return (integrated, peak)
+            }
+        }
+        return nil
+    }
+
     /// Runs conversions in parallel (ffmpeg is single-threaded for audio) and collects failures.
     static func convertMany(
         _ tasks: [ConvertTask],
@@ -152,7 +201,7 @@ enum Exporter {
         progress: @escaping @MainActor (Int) -> Void
     ) async -> [ConvertFailure] {
         guard let ffmpeg = Tools.ffmpeg else {
-            return [ConvertFailure(file: "ffmpeg", message: ToolError.missing("ffmpeg").localizedDescription)]
+            return [ConvertFailure(input: nil, message: ToolError.missing("ffmpeg").localizedDescription)]
         }
         var failures: [ConvertFailure] = []
         var done = 0
@@ -168,7 +217,7 @@ enum Exporter {
                         try await convert(task.input, to: task.output, settings: task.settings, loop: task.loop, ffmpeg: ffmpeg)
                         return nil
                     } catch {
-                        return ConvertFailure(file: task.input.lastPathComponent, message: error.localizedDescription)
+                        return ConvertFailure(input: task.input, message: error.localizedDescription)
                     }
                 }
             }

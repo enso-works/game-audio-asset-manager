@@ -18,6 +18,8 @@ struct ProjectExportReport: Sendable {
     var skipped = 0
     var failures: [ConvertFailure] = []
     var extraFiles: [URL] = []
+    /// Sounds that exported successfully, with the settings used.
+    var succeeded: [(URL, ExportSettings)] = []
 }
 
 /// Exports a project (or one folder of it) into the game folder, mirroring the folder structure.
@@ -47,7 +49,8 @@ enum ProjectExporter {
             let target = destination.appendingPathComponent(output)
             let outputDate = (try? target.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
             let sourceDate = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantFuture
-            let stale = outputDate.map { $0 < sourceDate || $0 < (meta.modified ?? .distantPast) } ?? true
+            let settingsChanged = library.lastExportSettings(for: file) != settings
+            let stale = settingsChanged || (outputDate.map { $0 < sourceDate || $0 < (meta.modified ?? .distantPast) } ?? true)
             items.append(ProjectExportItem(input: file, relativeOutput: output, settings: settings, meta: meta, isStale: stale))
         }
         return items
@@ -71,6 +74,8 @@ enum ProjectExporter {
         await progress(0, tasks.count)
         report.failures = await Exporter.convertMany(tasks) { done in progress(done, tasks.count) }
         report.exported = tasks.count - report.failures.count
+        let failed = Set(report.failures.compactMap(\.input))
+        report.succeeded = selected.filter { !failed.contains($0.input) }.map { ($0.input, $0.settings) }
 
         if writeManifest {
             let url = destination.appendingPathComponent(manifestName)
