@@ -69,6 +69,8 @@ enum ExportPreset: String, CaseIterable, Identifiable {
 struct ExportJob: Sendable {
     let range: Range<Int>
     let name: String
+    /// Loop points in seconds relative to the start of the range.
+    var loop: LoopPoints?
 }
 
 enum Exporter {
@@ -97,6 +99,29 @@ enum Exporter {
         case .mp3: args += ["-c:a", "libmp3lame", "-b:a", "\(settings.mp3Bitrate)k"]
         }
         return args
+    }
+
+    /// Converts one file with ffmpeg and embeds loop points when the target is WAV.
+    static func convert(_ input: URL, to output: URL, settings: ExportSettings, loop: LoopPoints?, ffmpeg: URL) async throws {
+        let log = LogTail()
+        let arguments = ["-y", "-v", "error", "-i", input.path, "-vn", "-map_metadata", "-1"]
+            + codecArguments(settings) + [output.path]
+        let status = try await ProcessRunner().run(ffmpeg, arguments) { log.append($0) }
+        guard status == 0 else {
+            throw ToolError.failed("ffmpeg failed on \(output.lastPathComponent):\n\(log.text)")
+        }
+        if settings.format == .wav, let loop {
+            try WAVLoop.embed(in: output, loop: loop)
+        }
+    }
+
+    /// How a loop will behave in the game for a given format.
+    static func loopNote(for format: ExportFormat) -> String {
+        switch format {
+        case .wav: "Loop points are embedded in the WAV. Godot 4 loops it automatically (Loop Mode: Detect From WAV)."
+        case .ogg: "OGG can't carry loop points Godot reads: tick Loop and set Loop Offset in Godot's Import dock, or export WAV. For three.js, use the manifest's loopStart/loopEnd."
+        case .mp3: "MP3 adds silence at the start and end, so loops click. Use OGG or WAV for loops."
+        }
     }
 
     static func export(
@@ -128,14 +153,7 @@ enum Exporter {
             let temp = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("wav")
             defer { try? fm.removeItem(at: temp) }
             try clip.writeWAV(to: temp, range: job.range)
-
-            let log = LogTail()
-            let arguments = ["-y", "-v", "error", "-i", temp.path, "-map_metadata", "-1"]
-                + codecArguments(settings) + [output.path]
-            let status = try await ProcessRunner().run(ffmpeg, arguments) { log.append($0) }
-            guard status == 0 else {
-                throw ToolError.failed("ffmpeg failed on \(output.lastPathComponent):\n\(log.text)")
-            }
+            try await convert(temp, to: output, settings: settings, loop: job.loop, ffmpeg: ffmpeg)
             results.append(output)
         }
         await progress(jobs.count, jobs.count)

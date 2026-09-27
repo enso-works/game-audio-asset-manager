@@ -88,6 +88,11 @@ struct ExportView: View {
                     Text(activePreset?.note ?? "Custom settings.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    if jobs.contains(where: { $0.loop != nil }) {
+                        Label(Exporter.loopNote(for: settings.format), systemImage: "repeat")
+                            .font(.caption)
+                            .foregroundStyle(settings.format == .mp3 ? .orange : .green)
+                    }
                 }
 
                 Section("Destination") {
@@ -143,13 +148,24 @@ struct ExportView: View {
     private var jobs: [ExportJob] {
         switch scope {
         case .whole:
-            return [ExportJob(range: 0..<editor.frameCount, name: baseName)]
+            let range = 0..<editor.frameCount
+            return [ExportJob(range: range, name: baseName, loop: loopPoints(within: range))]
         case .selection:
             guard let selection = editor.selection, !selection.isEmpty else { return [] }
-            return [ExportJob(range: selection, name: baseName)]
+            return [ExportJob(range: selection, name: baseName, loop: loopPoints(within: selection))]
         case .regions:
-            return editor.regions.map { ExportJob(range: $0.range, name: prefix + $0.name) }
+            return editor.regions.map { ExportJob(range: $0.range, name: prefix + $0.name, loop: loopPoints(within: $0.range)) }
         }
+    }
+
+    /// The loop, relative to the range, if it lies fully inside it.
+    private func loopPoints(within range: Range<Int>) -> LoopPoints? {
+        guard let loop = editor.loop, loop.lowerBound >= range.lowerBound, loop.upperBound <= range.upperBound else { return nil }
+        let rate = editor.sampleRate
+        return LoopPoints(
+            start: Double(loop.lowerBound - range.lowerBound) / rate,
+            end: Double(loop.upperBound - range.lowerBound) / rate
+        )
     }
 
     private var previewNames: String {
