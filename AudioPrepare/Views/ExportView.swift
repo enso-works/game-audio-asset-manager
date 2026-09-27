@@ -47,47 +47,7 @@ struct ExportView: View {
                 }
 
                 Section("Format") {
-                    HStack {
-                        ForEach(ExportPreset.allCases) { preset in
-                            Button(preset.title) { settings = preset.settings }
-                                .buttonStyle(.bordered)
-                                .tint(activePreset == preset ? .accentColor : nil)
-                        }
-                    }
-                    Picker("Format", selection: $settings.format) {
-                        ForEach(ExportFormat.allCases) { Text($0.label).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    Picker("Channels", selection: $settings.channels) {
-                        Text("Keep").tag(0)
-                        Text("Mono").tag(1)
-                        Text("Stereo").tag(2)
-                    }
-                    .pickerStyle(.segmented)
-                    Picker("Sample rate", selection: $settings.sampleRate) {
-                        Text("Keep").tag(0)
-                        Text("22.05 kHz").tag(22050)
-                        Text("44.1 kHz").tag(44100)
-                        Text("48 kHz").tag(48000)
-                    }
-                    switch settings.format {
-                    case .wav:
-                        Picker("Bit depth", selection: $settings.wavBitDepth) {
-                            Text("16-bit").tag(16)
-                            Text("24-bit").tag(24)
-                        }
-                    case .ogg:
-                        Picker("Quality", selection: $settings.oggQuality) {
-                            ForEach([3, 4, 5, 6, 7, 8, 10], id: \.self) { Text("q\($0) (~\(oggKbps($0)) kbps)").tag($0) }
-                        }
-                    case .mp3:
-                        Picker("Bitrate", selection: $settings.mp3Bitrate) {
-                            ForEach([96, 128, 160, 192, 256, 320], id: \.self) { Text("\($0) kbps").tag($0) }
-                        }
-                    }
-                    Text(activePreset?.note ?? "Custom settings.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    ExportSettingsEditor(settings: $settings)
                     if jobs.contains(where: { $0.loop != nil }) {
                         Label(Exporter.loopNote(for: settings.format), systemImage: "repeat")
                             .font(.caption)
@@ -141,10 +101,6 @@ struct ExportView: View {
         .onChange(of: settings) { _, value in value.save() }
     }
 
-    private var activePreset: ExportPreset? {
-        ExportPreset.allCases.first { $0.settings == settings }
-    }
-
     private var jobs: [ExportJob] {
         switch scope {
         case .whole:
@@ -172,10 +128,6 @@ struct ExportView: View {
         let names = jobs.map { Exporter.sanitize($0.name) + "." + settings.format.rawValue }
         guard names.count > 3 else { return names.joined(separator: "\n") }
         return names.prefix(2).joined(separator: "\n") + "\n+ \(names.count - 2) more"
-    }
-
-    private func oggKbps(_ quality: Int) -> Int {
-        [3: 112, 4: 128, 5: 160, 6: 192, 7: 224, 8: 256, 10: 500][quality] ?? 0
     }
 
     private func chooseFolder() {

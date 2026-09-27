@@ -17,6 +17,22 @@ struct ExportSettings: Equatable, Codable {
 
     private static let key = "exportSettings"
 
+    /// Short description, e.g. "WAV 16-bit · Mono · 44.1 kHz".
+    var summary: String {
+        let quality = switch format {
+        case .wav: "\(wavBitDepth)-bit"
+        case .ogg: "q\(oggQuality)"
+        case .mp3: "\(mp3Bitrate) kbps"
+        }
+        let channelText = channels == 1 ? "Mono" : channels == 2 ? "Stereo" : "Keep channels"
+        let rateText = sampleRate == 0 ? "Keep rate" : String(format: "%g kHz", Double(sampleRate) / 1000)
+        return "\(format.label) \(quality) · \(channelText) · \(rateText)"
+    }
+
+    var preset: ExportPreset? {
+        ExportPreset.allCases.first { $0.settings == self }
+    }
+
     static func load() -> ExportSettings {
         guard let data = UserDefaults.standard.data(forKey: key),
               let settings = try? JSONDecoder().decode(ExportSettings.self, from: data)
@@ -66,6 +82,20 @@ enum ExportPreset: String, CaseIterable, Identifiable {
     }
 }
 
+/// One file-to-file conversion, used by project export and batch convert.
+struct ConvertTask: Sendable {
+    let input: URL
+    let output: URL
+    let settings: ExportSettings
+    var loop: LoopPoints?
+}
+
+struct ConvertFailure: Sendable, Identifiable {
+    let id = UUID()
+    let file: String
+    let message: String
+}
+
 struct ExportJob: Sendable {
     let range: Range<Int>
     let name: String
@@ -113,6 +143,55 @@ enum Exporter {
         if settings.format == .wav, let loop {
             try WAVLoop.embed(in: output, loop: loop)
         }
+    }
+
+    /// Runs conversions in parallel (ffmpeg is single-threaded for audio) and collects failures.
+    static func convertMany(
+        _ tasks: [ConvertTask],
+        concurrency: Int = 4,
+        progress: @escaping @MainActor (Int) -> Void
+    ) async -> [ConvertFailure] {
+        guard let ffmpeg = Tools.ffmpeg else {
+            return [ConvertFailure(file: "ffmpeg", message: ToolError.missing("ffmpeg").localizedDescription)]
+        }
+        var failures: [ConvertFailure] = []
+        var done = 0
+        await withTaskGroup(of: ConvertFailure?.self) { group in
+            var next = 0
+            func addNext() {
+                guard next < tasks.count else { return }
+                let task = tasks[next]
+                next += 1
+                group.addTask {
+                    do {
+                        try FileManager.default.createDirectory(at: task.output.deletingLastPathComponent(), withIntermediateDirectories: true)
+                        try await convert(task.input, to: task.output, settings: task.settings, loop: task.loop, ffmpeg: ffmpeg)
+                        return nil
+                    } catch {
+                        return ConvertFailure(file: task.input.lastPathComponent, message: error.localizedDescription)
+                    }
+                }
+            }
+            for _ in 0..<concurrency { addNext() }
+            for await failure in group {
+                if let failure { failures.append(failure) }
+                done += 1
+                await progress(done)
+                addNext()
+            }
+        }
+        return failures
+    }
+
+    /// Duration in seconds via ffprobe, or nil if unavailable.
+    static func duration(of url: URL) async -> Double? {
+        guard let ffprobe = Tools.find("ffprobe") else { return nil }
+        let log = LogTail()
+        let status = try? await ProcessRunner().run(
+            ffprobe, ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", url.path]
+        ) { log.append($0) }
+        guard status == 0 else { return nil }
+        return Double(log.text.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// How a loop will behave in the game for a given format.
