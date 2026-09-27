@@ -130,12 +130,23 @@ final class ProcessRunner: @unchecked Sendable {
 final class LogTail: @unchecked Sendable {
     private var lines: [String] = []
     private let lock = NSLock()
+    private let limit: Int
+
+    init(limit: Int = 20) {
+        self.limit = limit
+    }
 
     func append(_ line: String) {
         lock.lock()
         lines.append(line)
-        if lines.count > 20 { lines.removeFirst() }
+        if lines.count > limit { lines.removeFirst() }
         lock.unlock()
+    }
+
+    var all: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return lines
     }
 
     var text: String {
