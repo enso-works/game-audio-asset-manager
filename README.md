@@ -33,6 +33,16 @@ Switch or create projects from the menu at the top of the sidebar. Drag sounds b
 
 Workflow: download into the Inbox, open a sound, cut it, then **Save As** (Shift Cmd S) into a project folder. **Save Regions as Sounds** splits one long recording (like an SFX pack video) into separate files.
 
+## Editing
+
+- **Cut**: trim to selection, delete, silence, trim silence at both ends.
+- **Process**: fades, gain, normalize, reverse.
+- **Filter**: Low Cut removes rumble and hum, High Cut removes hiss (24 dB/octave).
+- **Auto-Split** (Regions panel): finds every sound in a pack by silence. Adjust threshold, minimum gap, minimum length and padding while the matches are outlined on the waveform, then create regions in one click.
+- **Game**: **Preview** plays the sound 6 times with random pitch and volume, like a game would. **Variations** saves pitched copies (`jump_01` ... `jump_05`, evenly spread over ±N semitones) so the game can pick one at random. Pitch changes speed too, like Godot's `pitch_scale` and three.js `playbackRate`, unless you tick "Keep original length".
+
+Processing applies to the selection, or to the whole sound when nothing is selected.
+
 ## Export
 
 - **Export Project** (Shift Cmd E, or the button at the bottom of the sidebar) converts every sound into the game folder, recreating the project folders. Each folder has its own format (subfolders inherit), e.g. `sfx` as WAV and `music` as OGG. "Only export changed sounds" makes re-exports fast.
@@ -42,6 +52,8 @@ Workflow: download into the Inbox, open a sound, cut it, then **Save As** (Shift
 - **Batch Convert** (sidebar) converts any folder of audio files with one preset, keeping subfolders.
 
 Presets: Godot SFX (WAV 16-bit mono), Godot Music (OGG), three.js SFX and Music (MP3). File and folder names are exported as `snake_case`.
+
+**Loudness matching**: set a LUFS target per folder (e.g. -16 for `sfx`, -20 for `music`) so everything sits at the same perceived volume in the game. Each sound is measured (EBU R128) and gets one fixed gain, so its dynamics stay intact; true peaks are capped at -1 dBTP. Very short sounds are measured looped. Changing a folder's format or loudness marks its sounds as changed for the next export.
 
 ## Loops
 
