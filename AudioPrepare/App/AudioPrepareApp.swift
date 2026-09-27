@@ -71,6 +71,11 @@ struct AudioPrepareApp: App {
                 Button("Zoom to Selection") { editor.zoomToSelection() }
                     .keyboardShortcut("0", modifiers: [.command, .shift])
             }
+            CommandGroup(replacing: .help) {
+                Button("Keyboard Shortcuts") { editor.showShortcuts = true }
+                    .keyboardShortcut("/")
+                    .disabled(editor.clip == nil)
+            }
         }
 
         Settings {

@@ -28,6 +28,40 @@ struct AudioClip: Sendable {
         return buffer
     }
 
+    /// Matches another clip's format: mixes or duplicates channels, then resamples.
+    func conformed(sampleRate target: Double, channelCount targetChannels: Int) -> AudioClip {
+        var mixed = channels
+        if targetChannels == 1 && channels.count > 1 {
+            let scale = 1 / Float(channels.count)
+            mixed = [(0..<frameCount).map { i in channels.reduce(0) { $0 + $1[i] } * scale }]
+        } else if targetChannels == 2 && channels.count == 1 {
+            mixed = [channels[0], channels[0]]
+        }
+        let clip = AudioClip(channels: mixed, sampleRate: sampleRate)
+        guard target != sampleRate, frameCount > 0,
+              let input = clip.makeBuffer(0..<clip.frameCount),
+              let format = AVAudioFormat(standardFormatWithSampleRate: target, channels: AVAudioChannelCount(mixed.count)),
+              let converter = AVAudioConverter(from: input.format, to: format),
+              let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(Double(frameCount) * target / sampleRate) + 1024)
+        else { return clip }
+        var consumed = false
+        _ = converter.convert(to: output, error: nil) { _, status in
+            if consumed {
+                status.pointee = .endOfStream
+                return nil
+            }
+            consumed = true
+            status.pointee = .haveData
+            return input
+        }
+        guard let data = output.floatChannelData else { return clip }
+        let count = Int(output.frameLength)
+        return AudioClip(
+            channels: (0..<mixed.count).map { Array(UnsafeBufferPointer(start: data[$0], count: count)) },
+            sampleRate: target
+        )
+    }
+
     /// Writes a 32-bit float WAV (lossless intermediate for ffmpeg and library copies).
     func writeWAV(to url: URL, range: Range<Int>) throws {
         let settings: [String: Any] = [

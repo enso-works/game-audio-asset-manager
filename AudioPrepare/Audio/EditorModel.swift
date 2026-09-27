@@ -47,6 +47,10 @@ final class EditorModel {
     /// Random pitch range (± semitones) for the game preview and variations.
     var pitchSpread = 2.0
     var showVariations = false
+    var showAutoSplit = false
+    var showShortcuts = false
+    /// Copied audio, shared across files so sounds can be combined.
+    static var clipboard: AudioClip?
     var showExport = false
     var showSaveAs = false
     var showSaveRegions = false
@@ -621,6 +625,67 @@ final class EditorModel {
         }
         library.refresh()
         return results
+    }
+
+    // MARK: - Clipboard
+
+    func copySelection() {
+        guard let clip, let selection, !selection.isEmpty else { return }
+        Self.clipboard = AudioOps.slice(clip, selection)
+    }
+
+    func cutSelection() {
+        copySelection()
+        deleteSelection()
+    }
+
+    /// Inserts the clipboard at the cursor, or replaces the selection. Converts rate and channels to match.
+    func paste() {
+        guard let clip, let copied = Self.clipboard?.conformed(sampleRate: clip.sampleRate, channelCount: clip.channelCount),
+              copied.frameCount > 0
+        else { return }
+        let replaced = hasSelection ? selection! : cursor..<cursor
+        let count = copied.frameCount
+        perform("Paste", { AudioOps.replace($0, replaced, with: copied) }) { s in
+            s.regions = RegionMath.afterDelete(s.regions, replaced).compactMap { RegionMath.insert($0, at: replaced.lowerBound, count: count) }
+            s.loop = RegionMath.delete(s.loop, replaced).map { RegionMath.insert($0, at: replaced.lowerBound, count: count) }
+            s.selection = replaced.lowerBound..<(replaced.lowerBound + count)
+            s.cursor = replaced.lowerBound
+        }
+    }
+
+    // MARK: - Cursor and selection keys
+
+    func nudgeCursor(milliseconds: Int) {
+        guard let clip else { return }
+        let base = player.isPlaying ? player.position : cursor
+        seek(to: base + clip.frames(forMilliseconds: milliseconds))
+        let c = Double(cursor)
+        if c < viewStart || c > viewStart + viewLength { center(on: c) }
+    }
+
+    /// The playhead while playing (to mark on the fly), otherwise the cursor.
+    private var markPosition: Int { player.isPlaying ? player.position : cursor }
+
+    func markSelectionStart() {
+        let start = markPosition
+        let end = selection.map { max($0.upperBound, start + 1) } ?? frameCount
+        selection = start < end ? start..<min(end, frameCount) : nil
+    }
+
+    func markSelectionEnd() {
+        let end = markPosition
+        let start = selection.map { min($0.lowerBound, end - 1) } ?? cursor
+        selection = start < end ? max(0, start)..<end : nil
+    }
+
+    func selectAdjacentRegion(forward: Bool) {
+        guard !regions.isEmpty else { return }
+        let anchor = selection?.lowerBound ?? cursor
+        let target = forward
+            ? regions.first { $0.start > anchor } ?? regions.first!
+            : regions.last { $0.start < anchor } ?? regions.last!
+        selectRegion(target)
     }
 
     func playRegion(_ region: Region) {

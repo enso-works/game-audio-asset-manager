@@ -14,6 +14,15 @@ enum AudioOps {
         AudioClip(channels: clip.channels.map { Array($0[range]) }, sampleRate: clip.sampleRate)
     }
 
+    /// Replaces a range (empty to insert) with other audio of the same format.
+    static func replace(_ clip: AudioClip, _ range: Range<Int>, with other: AudioClip) -> AudioClip {
+        var out = clip
+        for c in out.channels.indices {
+            out.channels[c].replaceSubrange(range, with: other.channels[min(c, other.channelCount - 1)])
+        }
+        return out
+    }
+
     static func delete(_ clip: AudioClip, _ range: Range<Int>) -> AudioClip {
         var out = clip
         for c in out.channels.indices { out.channels[c].removeSubrange(range) }
@@ -246,6 +255,21 @@ enum RegionMath {
         let start = max(range.lowerBound, kept.lowerBound)
         let end = min(range.upperBound, kept.upperBound)
         return end > start ? (start - kept.lowerBound)..<(end - kept.lowerBound) : nil
+    }
+
+    /// Shifts a range for audio inserted at `position`; a range spanning the position grows.
+    static func insert(_ range: Range<Int>, at position: Int, count: Int) -> Range<Int> {
+        let start = range.lowerBound < position ? range.lowerBound : range.lowerBound + count
+        let end = range.upperBound <= position ? range.upperBound : range.upperBound + count
+        return start..<end
+    }
+
+    static func insert(_ region: Region, at position: Int, count: Int) -> Region? {
+        var r = region
+        let moved = insert(region.range, at: position, count: count)
+        r.start = moved.lowerBound
+        r.end = moved.upperBound
+        return r
     }
 
     static func delete(_ range: Range<Int>?, _ removed: Range<Int>) -> Range<Int>? {

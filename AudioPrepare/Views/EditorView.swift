@@ -32,6 +32,7 @@ struct EditorView: View {
         .sheet(isPresented: $editor.showSaveAs) { SaveAsView() }
         .sheet(isPresented: $editor.showSaveRegions) { SaveRegionsView() }
         .sheet(isPresented: $editor.showVariations) { VariationsView() }
+        .sheet(isPresented: $editor.showShortcuts) { ShortcutsView() }
         .onAppear {
             editor.undoManager = undoManager
             installKeyMonitor()
@@ -55,47 +56,6 @@ struct EditorView: View {
     private func removeKeyMonitor() {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
-    }
-}
-
-enum KeyCommands {
-    @MainActor
-    static func handle(_ event: NSEvent, editor: EditorModel) -> Bool {
-        guard editor.clip != nil,
-              let window = event.window,
-              window.sheetParent == nil, window.attachedSheet == nil,
-              !(window.firstResponder is NSText)
-        else { return false }
-
-        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
-        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
-
-        if modifiers == [.command] && key == "a" {
-            editor.selectAll()
-            return true
-        }
-        guard modifiers.isEmpty || modifiers == [.shift] else { return false }
-
-        switch event.keyCode {
-        case 49: editor.togglePlay()                          // space
-        case 51, 117: editor.deleteSelection()                // delete, forward delete
-        case 53:                                              // escape
-            if editor.player.isPlaying { editor.stop() } else { editor.selection = nil }
-        case 36, 115: editor.seek(to: 0)                      // return, home
-        default:
-            switch key {
-            case "r": editor.addRegion()
-            case "k": editor.setLoopFromSelection()
-            case "p": editor.playLoop(withIntro: modifiers == [.shift])
-            case "l": editor.loopPlayback.toggle()
-            case "t": editor.trimToSelection()
-            case "i": editor.fadeIn()
-            case "o": editor.fadeOut()
-            case "n": editor.normalize()
-            default: return false
-            }
-        }
-        return true
     }
 }
 
@@ -275,15 +235,15 @@ private struct EditBar: View {
             Button("Trim to Selection", systemImage: "crop") { editor.trimToSelection() }
                 .help("Keep only the selected part (T)")
             Button("Delete", systemImage: "scissors") { editor.deleteSelection() }
-                .help("Cut the selected part out (Delete)")
+                .help("Cut the selected part out (C or Delete)")
             Button("Silence", systemImage: "speaker.slash") { editor.silenceSelection() }
-                .help("Replace the selection with silence")
+                .help("Replace the selection with silence (S)")
             Button("Add Region", systemImage: "flag") { editor.addRegion() }
                 .help("Mark the selection as a region to export as its own file (R)")
         }
         .disabled(!editor.hasSelection)
         Button("Trim Silence", systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right") { editor.trimSilence() }
-            .help("Remove silence (below -50 dB) from start and end")
+            .help("Remove silence (below -50 dB) from start and end (Shift T)")
     }
 
     @ViewBuilder private var processButtons: some View {
@@ -299,9 +259,9 @@ private struct EditBar: View {
         .fixedSize()
         .help("Fade length when nothing is selected")
         Button("Quieter", systemImage: "speaker.wave.1") { editor.applyGain(-editor.gainStepDb) }
-            .help("Lower the volume by the gain step")
+            .help("Lower the volume by the gain step (-)")
         Button("Louder", systemImage: "speaker.wave.3") { editor.applyGain(editor.gainStepDb) }
-            .help("Raise the volume by the gain step")
+            .help("Raise the volume by the gain step (=)")
         Picker("Gain", selection: $editor.gainStepDb) {
             ForEach([1.0, 3.0, 6.0, 12.0], id: \.self) { Text("\(Int($0)) dB").tag($0) }
         }
@@ -311,20 +271,20 @@ private struct EditBar: View {
         Button("Normalize", systemImage: "waveform.badge.plus") { editor.normalize() }
             .help("Raise peak to -1 dBFS (N)")
         Button("Reverse", systemImage: "arrow.uturn.left") { editor.reverse() }
-            .help("Reverse the selection or the whole file")
+            .help("Reverse the selection or the whole file (V)")
     }
 
     @ViewBuilder private var filterButtons: some View {
         @Bindable var editor = editor
         Button("Low Cut", systemImage: "line.diagonal.arrow") { editor.applyFilter(.lowCut) }
-            .help("Remove rumble and hum below the frequency (24 dB/octave)")
+            .help("Remove rumble and hum below the frequency, 24 dB/octave (B)")
         Picker("Low cut frequency", selection: $editor.lowCutHz) {
             ForEach([40.0, 80, 120, 200, 400, 800], id: \.self) { Text(Self.hertz($0)).tag($0) }
         }
         .labelsHidden()
         .fixedSize()
         Button("High Cut", systemImage: "line.diagonal") { editor.applyFilter(.highCut) }
-            .help("Remove hiss and harshness above the frequency (24 dB/octave)")
+            .help("Remove hiss and harshness above the frequency, 24 dB/octave (H)")
         Picker("High cut frequency", selection: $editor.highCutHz) {
             ForEach([2000.0, 4000, 6000, 8000, 12000, 16000], id: \.self) { Text(Self.hertz($0)).tag($0) }
         }
@@ -335,7 +295,7 @@ private struct EditBar: View {
     @ViewBuilder private var gameButtons: some View {
         @Bindable var editor = editor
         Button("Preview", systemImage: "gamecontroller") { editor.playGamePreview() }
-            .help("Play it 6 times with random pitch and volume, like the game would")
+            .help("Play it 6 times with random pitch and volume, like the game would (G)")
         Picker("Pitch spread", selection: $editor.pitchSpread) {
             ForEach([0.5, 1, 2, 3, 5], id: \.self) { Text(String(format: "±%g st", $0)).tag($0) }
         }
@@ -343,7 +303,7 @@ private struct EditBar: View {
         .fixedSize()
         .help("Random pitch range in semitones")
         Button("Variations...", systemImage: "square.stack.3d.up") { editor.showVariations = true }
-            .help("Save several pitched copies (jump_01, jump_02, ...) into a project folder")
+            .help("Save several pitched copies (jump_01, jump_02, ...) into a project folder (Shift G)")
         if let pitch = editor.player.previewPitch {
             Text(String(format: "%+.1f st", pitch))
                 .font(.caption.monospacedDigit())
@@ -364,11 +324,11 @@ private struct EditBar: View {
             Button("Play", systemImage: "repeat.circle") { editor.playLoop() }
                 .help("Repeat the loop (P). Shift P plays the intro first, like the game.")
             Button("Seam", systemImage: "ear") { editor.auditionSeam() }
-                .help("Play the end of the loop into its start to check the join")
+                .help("Play the end of the loop into its start to check the join (J)")
             Button("Snap", systemImage: "scope") { editor.snapLoopToZeroCrossings() }
-                .help("Move loop points to the nearest zero crossing to avoid clicks")
+                .help("Move loop points to the nearest zero crossing to avoid clicks (Z)")
             Button("Seamless", systemImage: "infinity") { editor.makeSeamlessLoop() }
-                .help("Crossfade the loop end into its start and trim the file to the loop")
+                .help("Crossfade the loop end into its start and trim the file to the loop (M)")
             Picker("Crossfade", selection: $editor.loopCrossfadeMs) {
                 ForEach([10, 50, 100, 250, 500, 1000, 2000], id: \.self) { Text("\($0) ms").tag($0) }
             }
@@ -378,7 +338,7 @@ private struct EditBar: View {
             Button("Trim", systemImage: "crop") { editor.trimToLoop() }
                 .help("Cut everything outside the loop")
             Button("Clear", systemImage: "xmark") { editor.clearLoop() }
-                .help("Remove the loop points")
+                .help("Remove the loop points (Shift K)")
         }
         .disabled(editor.loop == nil)
     }
@@ -388,9 +348,9 @@ private struct RegionsPanel: View {
     @Environment(EditorModel.self) private var editor
     @State private var renaming: Region?
     @State private var newName = ""
-    @State private var showAutoSplit = false
 
     var body: some View {
+        @Bindable var editor = editor
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text("Regions").font(.headline)
@@ -398,9 +358,9 @@ private struct RegionsPanel: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button("Auto-Split...", systemImage: "wand.and.rays") { showAutoSplit = true }
-                    .help("Find separate sounds by silence and turn them into regions")
-                    .popover(isPresented: $showAutoSplit, arrowEdge: .bottom) { AutoSplitPopover() }
+                Button("Auto-Split...", systemImage: "wand.and.rays") { editor.showAutoSplit = true }
+                    .help("Find separate sounds by silence and turn them into regions (Shift R)")
+                    .popover(isPresented: $editor.showAutoSplit, arrowEdge: .bottom) { AutoSplitPopover() }
                 if !editor.regions.isEmpty {
                     Button("Save as Sounds...", systemImage: "square.split.2x1") { editor.showSaveRegions = true }
                         .help("Save each region as its own WAV in a project folder")
