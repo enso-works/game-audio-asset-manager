@@ -38,7 +38,8 @@ Workflow: download into the Inbox, open a sound, cut it, then **Save As** (Shift
 
 - **Cut**: trim to selection, delete, silence, trim silence at both ends.
 - **Process**: fades, gain, normalize, reverse.
-- **Filter**: Low Cut removes rumble and hum, High Cut removes hiss (24 dB/octave).
+- **Repair**: Low Cut removes rumble and hum, High Cut removes hiss (24 dB/octave). **Denoise** reduces steady background noise (hiss, hum, fans): select a moment with only noise and learn it (Shift D), or let it pick the quietest parts automatically. **Remove DC** re-centers the waveform, **Mono** mixes to one channel.
+- **Effects**: **Pitch & Speed** (independent, or tape-style where both change together; regions, loop and tempo follow), **Reverb** (rooms, halls, plate, cathedral, with an optional tail), **Compress** (gentle, punchy and limiter presets).
 - **Auto-Split** (Regions panel): finds every sound in a pack by silence. Adjust threshold, minimum gap, minimum length and padding while the matches are outlined on the waveform, then create regions in one click.
 - **Game**: **Preview** plays the sound 6 times with random pitch and volume, like a game would. **Variations** saves pitched copies (`jump_01` ... `jump_05`, evenly spread over ±N semitones) so the game can pick one at random. Pitch changes speed too, like Godot's `pitch_scale` and three.js `playbackRate`, unless you tick "Keep original length".
 
@@ -106,7 +107,7 @@ If downloads start failing, update yt-dlp: `brew upgrade yt-dlp`.
 
 ## Shortcuts
 
-Press **?** in the editor (or Help > Keyboard Shortcuts, Cmd /) for the full list. Highlights:
+Hover over any tool for a moment to see what it does and its shortcut. Press **?** in the editor (or Help > Keyboard Shortcuts, Cmd /) for the full list. Highlights:
 
 | Key | Action |
 | --- | --- |
@@ -121,6 +122,8 @@ Press **?** in the editor (or Help > Keyboard Shortcuts, Cmd /) for the full lis
 | I / O / N | Fade in / fade out / normalize |
 | = / - | Louder / quieter |
 | V / B / H | Reverse / low cut / high cut |
+| D / Shift D | Denoise / learn noise from selection |
+| F / E / Q / U | Pitch & speed / reverb / compress / mono |
 | R / Shift R | Add region / auto-split |
 | K / Shift K | Set / clear loop |
 | P / Shift P | Play loop / intro then loop |
