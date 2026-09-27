@@ -112,10 +112,23 @@ enum AudioDecoder {
         }.value
     }
 
+    /// Largest sound we decode into memory: a third of RAM, at most 3 GB (about 2.5 h of 48 kHz stereo).
+    static var memoryLimit: Int64 {
+        min(3 << 30, Int64(ProcessInfo.processInfo.physicalMemory / 3))
+    }
+
     private static func decodeNative(_ url: URL) throws -> AudioClip {
         let file = try AVAudioFile(forReading: url)
         let format = file.processingFormat
         let channelCount = min(Int(format.channelCount), 2)
+        let bytes = file.length * Int64(channelCount) * 4
+        guard bytes <= memoryLimit else {
+            let minutes = Double(file.length) / format.sampleRate / 60
+            throw ToolError.failed(String(
+                format: "%@ is too long to edit (%.0f minutes, about %.1f GB in memory). Download a time range or use Batch Convert instead.",
+                url.lastPathComponent, minutes, Double(bytes) / 1_073_741_824
+            ))
+        }
         let chunk: AVAudioFrameCount = 1 << 18
         guard channelCount > 0, let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunk) else {
             throw ToolError.failed("Unsupported audio format")
