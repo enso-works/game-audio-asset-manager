@@ -1,6 +1,13 @@
 import Accelerate
 import Foundation
 
+enum FilterKind: Sendable {
+    /// High-pass: removes rumble and low hum below the cutoff.
+    case lowCut
+    /// Low-pass: removes hiss and harshness above the cutoff.
+    case highCut
+}
+
 /// Pure edit operations. Each returns a new clip; the caller keeps the old one for undo.
 enum AudioOps {
     static func slice(_ clip: AudioClip, _ range: Range<Int>) -> AudioClip {
@@ -114,6 +121,49 @@ enum AudioOps {
             return out
         }
         return AudioClip(channels: channels, sampleRate: clip.sampleRate)
+    }
+
+    /// 4th-order Butterworth filter (24 dB/octave), built from two cascaded biquads.
+    static func filter(_ clip: AudioClip, _ range: Range<Int>, kind: FilterKind, frequency: Double) -> AudioClip {
+        let cutoff = min(max(frequency, 10), clip.sampleRate * 0.45)
+        let sections = [0.541_196_1, 1.306_563].map { q in biquad(kind, cutoff: cutoff, sampleRate: clip.sampleRate, q: q) }
+        return modify(clip, range) { pointer, count in
+            for section in sections { applyBiquad(pointer, count, section) }
+        }
+    }
+
+    private struct Biquad {
+        let b0, b1, b2, a1, a2: Double
+    }
+
+    /// RBJ cookbook coefficients, normalized by a0.
+    private static func biquad(_ kind: FilterKind, cutoff: Double, sampleRate: Double, q: Double) -> Biquad {
+        let w0 = 2 * Double.pi * cutoff / sampleRate
+        let cosW = cos(w0)
+        let alpha = sin(w0) / (2 * q)
+        let a0 = 1 + alpha
+        switch kind {
+        case .lowCut:
+            return Biquad(b0: (1 + cosW) / 2 / a0, b1: -(1 + cosW) / a0, b2: (1 + cosW) / 2 / a0,
+                          a1: -2 * cosW / a0, a2: (1 - alpha) / a0)
+        case .highCut:
+            return Biquad(b0: (1 - cosW) / 2 / a0, b1: (1 - cosW) / a0, b2: (1 - cosW) / 2 / a0,
+                          a1: -2 * cosW / a0, a2: (1 - alpha) / a0)
+        }
+    }
+
+    /// Direct form I in double precision, stable even for low cutoffs.
+    private static func applyBiquad(_ pointer: UnsafeMutablePointer<Float>, _ count: Int, _ c: Biquad) {
+        var x1 = 0.0, x2 = 0.0, y1 = 0.0, y2 = 0.0
+        for i in 0..<count {
+            let x = Double(pointer[i])
+            let y = c.b0 * x + c.b1 * x1 + c.b2 * x2 - c.a1 * y1 - c.a2 * y2
+            x2 = x1
+            x1 = x
+            y2 = y1
+            y1 = y
+            pointer[i] = Float(y)
+        }
     }
 
     private static func modify(_ clip: AudioClip, _ range: Range<Int>, _ body: (UnsafeMutablePointer<Float>, Int) -> Void) -> AudioClip {

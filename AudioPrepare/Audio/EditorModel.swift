@@ -40,6 +40,8 @@ final class EditorModel {
     var fadeMs = 100
     var gainStepDb = 3.0
     var loopCrossfadeMs = 250
+    var lowCutHz = 120.0
+    var highCutHz = 8000.0
     var showExport = false
     var showSaveAs = false
     var showSaveRegions = false
@@ -375,6 +377,12 @@ final class EditorModel {
     func applyGain(_ db: Double) {
         let range = editRange
         perform(db > 0 ? "Louder" : "Quieter") { AudioOps.gain($0, range, db: db) }
+    }
+
+    func applyFilter(_ kind: FilterKind) {
+        let range = editRange
+        let frequency = kind == .lowCut ? lowCutHz : highCutHz
+        perform(kind == .lowCut ? "Low Cut" : "High Cut") { AudioOps.filter($0, range, kind: kind, frequency: frequency) }
     }
 
     func normalize(targetDb: Double = -1) {

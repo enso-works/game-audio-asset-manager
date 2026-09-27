@@ -236,6 +236,7 @@ private struct EditBar: View {
         VStack(alignment: .leading, spacing: 8) {
             row("Cut") { cutButtons }
             row("Process") { processButtons }
+            row("Filter") { filterButtons }
             row("Loop") { loopButtons }
             HStack {
                 Text(editor.hasSelection ? "Processing applies to the selection." : "Nothing selected: processing applies to the whole file.")
@@ -308,6 +309,28 @@ private struct EditBar: View {
             .help("Raise peak to -1 dBFS (N)")
         Button("Reverse", systemImage: "arrow.uturn.left") { editor.reverse() }
             .help("Reverse the selection or the whole file")
+    }
+
+    @ViewBuilder private var filterButtons: some View {
+        @Bindable var editor = editor
+        Button("Low Cut", systemImage: "line.diagonal.arrow") { editor.applyFilter(.lowCut) }
+            .help("Remove rumble and hum below the frequency (24 dB/octave)")
+        Picker("Low cut frequency", selection: $editor.lowCutHz) {
+            ForEach([40.0, 80, 120, 200, 400, 800], id: \.self) { Text(Self.hertz($0)).tag($0) }
+        }
+        .labelsHidden()
+        .fixedSize()
+        Button("High Cut", systemImage: "line.diagonal") { editor.applyFilter(.highCut) }
+            .help("Remove hiss and harshness above the frequency (24 dB/octave)")
+        Picker("High cut frequency", selection: $editor.highCutHz) {
+            ForEach([2000.0, 4000, 6000, 8000, 12000, 16000], id: \.self) { Text(Self.hertz($0)).tag($0) }
+        }
+        .labelsHidden()
+        .fixedSize()
+    }
+
+    private static func hertz(_ value: Double) -> String {
+        value >= 1000 ? String(format: "%g kHz", value / 1000) : "\(Int(value)) Hz"
     }
 
     @ViewBuilder private var loopButtons: some View {
