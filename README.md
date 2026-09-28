@@ -15,7 +15,8 @@ Game Audio Asset Manager handles the whole trip in one place:
 3. **Cut**: auto-split a sound pack into single sounds, or mark regions by hand.
 4. **Loop**: set loop points, snap them to zero crossings, crossfade the seam, and make music loops a whole number of bars.
 5. **Organize**: one project per game. Folders mirror the game's sound folders, and every sound remembers where it came from.
-6. **Export**: one click converts every sound into the game folder with the right format and loudness for its folder. It also writes a manifest, credits, and typed code for Godot and three.js.
+6. **Play**: define sound events (which sounds, how they vary, which mixer bus, 3D falloff) and a bus tree.
+7. **Export**: one click converts every sound into the game folder with the right format and loudness for its folder. It also writes a manifest, credits, native Godot event and bus resources, and a typed Web Audio engine.
 
 ## How it was built
 
@@ -30,6 +31,7 @@ It started as **Audio Prepare**, a small clip editor, and was built in a series 
 | 5 | Crash guards for audio devices, unit tests and CI, generated `sounds.gd` and `sounds.ts`, variation groups, audio sprites, auto-export on save |
 | 6 | Performance: selection dragging went from ~400 ms to ~5 ms per mouse move (details below), and playback now streams |
 | 7 | Denoise, pitch and speed, reverb, compressor, hover cards that explain every tool |
+| 8 | Renamed to Game Audio Asset Manager. Sound events and mixer buses, exported as native Godot resources and a generated Web Audio engine with 3D audio |
 
 Every feature was checked against something measurable before it was committed:
 
@@ -97,6 +99,23 @@ Each game gets a project in `~/Music/Game Audio Asset Manager/projects/<Name>/`.
 
 ![Folder packed as an audio sprite](docs/screenshots/sprite-folder.png)
 
+### Sound events and mixer
+
+![Sound event editor: variants with weights, random pitch and volume, bus, limits and 3D](docs/screenshots/events.png)
+
+An **event** is what the game triggers, for example `player/jump`. Each event defines:
+
+- **Sounds**, with weights. One is picked per play: randomly without repeating the last one, randomly, or in order.
+- **Random pitch and volume**, so repeated sounds don't feel mechanical.
+- **Routing and limits**: the mixer bus it plays on, a maximum number of simultaneous instances (the oldest stops), and a cooldown for triggers that come too fast.
+- **3D**: falloff model, full-volume radius and silent distance, for positional sounds.
+
+**From Groups** turns every variation group (`jump_01`, `jump_02` ...) into an event in one click. **Audition** plays an event the way the game will.
+
+![Mixer with a nested bus tree](docs/screenshots/mixer.png)
+
+The **Mixer** holds the bus tree (Music, Ambience, SFX with Player, UI and World, Voice). Every bus feeds its parent and ends in Master, so one fader turns a whole category up or down.
+
 ### Export
 
 ![Project export with a format and loudness per folder](docs/screenshots/export.png)
@@ -111,31 +130,38 @@ Generated files in the export folder:
 | File | For |
 | --- | --- |
 | `audio_manifest.json` | Every sound with file, duration, loop points, BPM, sprite offset, plus variation groups |
-| `sounds.gd` | Godot `Sounds` class: preloaded streams, `Sounds.random("sfx/player/jump")`, OGG loop settings |
-| `sounds.ts` | three.js: typed `SoundKey`, groups, `pickVariant()` |
+| `sounds.gd` | Godot `Sounds` class: preloaded streams and groups, OGG loop settings, and for events `Sounds.play(key, player)` and `Sounds.apply_bus_layout()` |
+| `events/*.tres` | Godot `AudioStreamRandomizer` per event (variants, weights, random pitch and volume, playback mode) |
+| `audio_buses.tres` | Godot `AudioBusLayout` with the mixer tree |
+| `sounds.ts` | Web: typed `SoundKey`, groups, `pickVariant()` |
+| `audio_engine.ts` | Web: a dependency-free Web Audio engine for events and buses, with 3D via `PannerNode` |
 | `CREDITS.md` | Sources for attribution |
 
 ## Using the sounds in a game
 
-**Godot 4.** WAV loops are read automatically from the `smpl` chunk. OGG and MP3 files are cut at the loop end, and `sounds.gd` sets `loop_offset`:
+**Godot 4.3+.** WAV loops are read automatically from the `smpl` chunk. OGG and MP3 files are cut at the loop end, and `sounds.gd` sets `loop_offset`. Events carry their bus, volume, polyphony, cooldown and 3D settings:
 
 ```gdscript
-$Player/Jump.stream = Sounds.random("sfx/player/jump")   # one of jump_01..03
-$Player/Jump.play()
-$Music.stream = Sounds.MUSIC_DRUM_LOOP                   # loops from 1.545 s, set by Sounds
+func _ready() -> void:
+    Sounds.apply_bus_layout()                 # the project's mixer buses
+
+func jump() -> void:
+    Sounds.play("player/jump", $Jump3D)        # random variant, pitch, volume; returns false in cooldown
+
+$Music.stream = Sounds.MUSIC_DRUM_LOOP         # loops from 1.545 s, set by Sounds
 ```
 
-**three.js.** Sound keys are typed, so a typo fails to compile:
+**Web (three.js or any Web Audio app).** `audio_engine.ts` needs no dependencies, and event and bus names are typed, so a typo fails to compile:
 
 ```ts
-import { sounds, pickVariant } from './audio/sounds';
+import { AudioEngine } from './audio/audio_engine';
 
-const info = sounds[pickVariant('sfx/player/jump')];
-new THREE.AudioLoader().load('/audio/' + info.url, (buffer) => {
-  sound.setBuffer(buffer);
-  sound.setLoop(info.loop);
-  sound.play();
-});
+const engine = new AudioEngine(new AudioContext(), '/audio/');
+await engine.load();                                   // preload every event's sounds
+engine.play('player/jump');                            // 2D
+engine.play('world/park', { position: [4, 0, -2] });   // 3D (HRTF panner)
+engine.setListener(camera.position.toArray(), [0, 0, -1]);
+engine.setBusVolume('Music', -12);
 ```
 
 MP3 adds a few milliseconds of silence at both ends, so use OGG or WAV for loops.
@@ -169,4 +195,4 @@ If YouTube downloads start failing, update yt-dlp: `brew upgrade yt-dlp`.
 
 ## Roadmap
 
-Next, the app grows from a sound editor into a manager for all of a game's audio: sound events, mixing buses, environments, consistency checks and adaptive music. See [docs/ROADMAP.md](docs/ROADMAP.md).
+Sound events and buses (phase 1) are done. Next: project health and matching, environments, a live mix view, and adaptive music. See [docs/ROADMAP.md](docs/ROADMAP.md).

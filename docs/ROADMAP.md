@@ -1,6 +1,6 @@
 # Roadmap: from sound editor to game audio manager
 
-**Status: proposal, not started.**
+**Status:** phase 1 (events and buses) is done; the rest is proposed.
 
 Today Game Audio Asset Manager manages sound **files**: it cuts them, cleans them and exports them. A game also needs to know how each sound **plays**:
 
@@ -166,7 +166,7 @@ Everything above lives in `project.json`, next to what's already there:
 
 | Phase | Scope | Why first |
 | --- | --- | --- |
-| 1 | **Events + buses** with Godot `AudioStreamRandomizer` / `AudioBusLayout` export and the three.js helper | Everything else (environments, mix, music) builds on events and buses |
+| 1 | ✅ **Events + buses** with Godot `AudioStreamRandomizer` / `AudioBusLayout` export and a Web Audio engine (3D included) | Everything else (environments, mix, music) builds on events and buses |
 | 2 | **Health and matching** | Makes existing sounds consistent before building on them; mostly reuses tools we already have |
 | 3 | **Environments** with live preview | The biggest win for how a game *feels* |
 | 4 | **Mix view** with ducking and meters | Needs events, buses and environments to be meaningful |
@@ -178,9 +178,12 @@ Each phase ends the same way:
 - Generated Godot resources loaded and played in a headless Godot project.
 - Generated TypeScript checked with `tsc --strict`.
 
-## Open questions
+## Decisions
 
-1. Which Godot version does the game target? `AudioStreamInteractive` and `AudioStreamSynchronized` need 4.3+.
-2. three.js: plain `THREE.Audio`, or a wrapper such as Howler.js or React Three Fiber? This decides the shape of the generated helper.
-3. Is positional (3D) audio needed now, or later?
-4. Which environments does the current game need first? Real examples keep the first version focused.
+- Godot 4.3 or newer, so `AudioStreamInteractive` and `AudioStreamSynchronized` can be used for music.
+- The web side uses raw Web Audio (no Howler or React Three Fiber); the generated `audio_engine.ts` has no dependencies.
+- Positional (3D) audio is supported from phase 1.
+
+## Open question
+
+Which environments does the current game need first? Real examples keep phase 3 focused.
