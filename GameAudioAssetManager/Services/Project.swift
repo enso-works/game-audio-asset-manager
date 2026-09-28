@@ -38,6 +38,40 @@ struct ProjectConfig: Codable {
     var spriteFolders: [String]?
     /// Export options, stored per project so auto-export behaves like a manual export.
     var options: ExportOptions?
+    /// Sound events by key ("player/jump").
+    var events: [String: SoundEvent]?
+    /// Mixer buses; nil means the default layout.
+    var buses: [AudioBus]?
+
+    var mixBuses: [AudioBus] { buses ?? Mix.defaultBuses }
+
+    /// Keeps event sound paths valid when a file or folder moves.
+    mutating func renameSoundPaths(from old: String, to new: String) {
+        guard var events else { return }
+        for (key, event) in events {
+            var updated = event
+            updated.sounds = event.sounds.map { sound in
+                var moved = sound
+                if sound.path == old {
+                    moved.path = new
+                } else if sound.path.hasPrefix(old + "/") {
+                    moved.path = new + sound.path.dropFirst(old.count)
+                }
+                return moved
+            }
+            events[key] = updated
+        }
+        self.events = events
+    }
+
+    /// Drops event sounds that pointed at a deleted file or folder.
+    mutating func removeSoundPaths(under path: String) {
+        guard var events else { return }
+        for key in events.keys {
+            events[key]?.sounds.removeAll { $0.path == path || $0.path.hasPrefix(path + "/") }
+        }
+        self.events = events
+    }
 
     var exportOptions: ExportOptions { options ?? ExportOptions() }
 

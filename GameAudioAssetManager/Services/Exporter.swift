@@ -134,6 +134,11 @@ enum Exporter {
         return out.isEmpty ? "sound" : String(out.prefix(80))
     }
 
+    /// Sanitizes each component of a path ("SFX/Player Jump" -> "sfx/player_jump").
+    static func sanitizePath(_ path: String) -> String {
+        path.split(separator: "/").map { sanitize(String($0)) }.joined(separator: "/")
+    }
+
     static func codecArguments(_ settings: ExportSettings) -> [String] {
         var args: [String] = []
         if settings.channels > 0 { args += ["-ac", "\(settings.channels)"] }

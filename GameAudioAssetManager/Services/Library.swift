@@ -274,6 +274,7 @@ final class Library {
         config.sounds = config.sounds.filter { !removed($0.key) }
         config.lastExport = config.lastExport?.filter { !removed($0.key) }
         config.folderSettings = config.folderSettings.filter { !removed($0.key) }
+        config.removeSoundPaths(under: path)
         config.spriteFolders = config.spriteFolders?.filter { !removed($0) }
         saveConfig()
     }
@@ -302,6 +303,7 @@ final class Library {
             }
         }
         config.folderSettings = settings
+        config.renameSoundPaths(from: oldPath, to: newPath)
         config.spriteFolders = config.spriteFolders?.map { key in
             if key == oldPath { return newPath }
             if key.hasPrefix(oldPath + "/") { return newPath + key.dropFirst(oldPath.count) }
@@ -343,6 +345,72 @@ final class Library {
         }
         config.lastExport = record
         saveConfig()
+    }
+
+    // MARK: - Events and buses
+
+    var events: [String: SoundEvent] { config.events ?? [:] }
+
+    func setEvent(_ event: SoundEvent, for key: String) {
+        var events = config.events ?? [:]
+        events[key] = event
+        config.events = events
+        saveConfig()
+    }
+
+    func removeEvent(_ key: String) {
+        config.events?[key] = nil
+        saveConfig()
+    }
+
+    @discardableResult
+    func renameEvent(_ key: String, to newKey: String) -> Bool {
+        guard Mix.isValidEventKey(newKey), events[newKey] == nil, let event = events[key] else { return false }
+        config.events?[key] = nil
+        config.events?[newKey] = event
+        saveConfig()
+        return true
+    }
+
+    func setBuses(_ buses: [AudioBus]) {
+        config.buses = Mix.sorted(buses)
+        // Events on a removed bus fall back to its nearest remaining parent.
+        let paths = Set(buses.map(\.path))
+        if var events = config.events {
+            for key in events.keys where !paths.contains(events[key]!.bus) && events[key]!.bus != "Master" {
+                var parent = AudioBus(path: events[key]!.bus).parentPath
+                while let current = parent, !paths.contains(current) { parent = AudioBus(path: current).parentPath }
+                events[key]!.bus = parent ?? "Master"
+            }
+            config.events = events
+        }
+        saveConfig()
+    }
+
+    /// Creates an event for every variation group (jump_01, jump_02 ... -> "player/jump") that has none yet.
+    @discardableResult
+    func createEventsFromGroups() -> [String] {
+        let files = soundFiles(in: projectURL).compactMap { relativePath($0) }
+        let keyToPath = Dictionary(files.map { (($0 as NSString).deletingPathExtension, $0) }, uniquingKeysWith: { a, _ in a })
+        var created: [String] = []
+        var events = config.events ?? [:]
+        let usedPaths = Set(events.values.flatMap { $0.sounds.map(\.path) })
+        for (group, members) in ProjectExporter.groups(Array(keyToPath.keys)).sorted(by: { $0.key < $1.key }) {
+            let key = Mix.eventKey(for: Exporter.sanitizePath(group))
+            let paths = members.compactMap { keyToPath[$0] }
+            guard events[key] == nil, !paths.allSatisfy(usedPaths.contains), Mix.isValidEventKey(key) else { continue }
+            events[key] = SoundEvent(
+                sounds: paths.map { EventSound(path: $0) },
+                playback: .randomNoRepeat,
+                pitchSemitones: 1,
+                volumeRandomDb: 2,
+                bus: Mix.suggestedBus(for: paths[0], buses: config.mixBuses)
+            )
+            created.append(key)
+        }
+        config.events = events
+        saveConfig()
+        return created
     }
 
     func setExportOptions(_ options: ExportOptions) {
