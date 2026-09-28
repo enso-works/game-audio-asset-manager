@@ -5,6 +5,8 @@ import UniformTypeIdentifiers
 enum SidebarItem: Hashable {
     case downloader
     case batch
+    case events
+    case mixer
     case folder(URL)
     case file(URL)
 }
@@ -56,6 +58,10 @@ struct ContentView: View {
                 FolderView(folder: url)
             case .batch:
                 BatchConvertView()
+            case .events:
+                EventsView()
+            case .mixer:
+                MixerView()
             case .downloader, .none:
                 DownloaderView { select(.file($0)) }
             }
@@ -149,6 +155,13 @@ private struct SidebarView: View {
                     .tag(SidebarItem.downloader)
                 Label("Batch Convert", systemImage: "arrow.triangle.2.circlepath")
                     .tag(SidebarItem.batch)
+            }
+            Section("Mix") {
+                Label("Sound Events", systemImage: "bolt.horizontal")
+                    .badge(library.events.count)
+                    .tag(SidebarItem.events)
+                Label("Mixer", systemImage: "slider.vertical.3")
+                    .tag(SidebarItem.mixer)
             }
             Section(library.currentProject) {
                 OutlineGroup(library.tree, children: \.children) { node in

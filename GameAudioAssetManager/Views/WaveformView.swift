@@ -237,7 +237,7 @@ final class WaveformNSView: NSView {
         NSColor.systemYellow.withAlphaComponent(0.85).setFill()
         NSRect(x: x(for: model.cursor), y: 0, width: 1, height: bounds.height).fill(using: .sourceOver)
 
-        if model.player.isPlaying {
+        if model.player.isPlaying && model.player.showsPlayhead {
             NSColor.systemRed.setFill()
             NSRect(x: x(for: model.player.position), y: 0, width: 1.5, height: bounds.height).fill()
         }

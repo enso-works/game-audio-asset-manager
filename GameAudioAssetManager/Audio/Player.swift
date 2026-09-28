@@ -8,6 +8,8 @@ final class Player {
     private(set) var position = 0
     /// Pitch of the current game-preview hit in semitones, nil during normal playback.
     private(set) var previewPitch: Double?
+    /// False while auditioning events, whose audio isn't the sound shown in the editor.
+    private(set) var showsPlayhead = true
     /// Set when the audio output can't be used (no device, device removed mid-play).
     private(set) var outputError: String?
 
@@ -199,6 +201,48 @@ final class Player {
         _ = guarded { node.play() }
     }
 
+    /// One play in an event audition: a sound with its pitch (semitones) and volume (dB).
+    struct Hit {
+        let clip: AudioClip
+        let semitones: Double
+        let volumeDb: Double
+    }
+
+    /// Plays different sounds one after another (an event auditioned several times).
+    func playHits(_ hits: [Hit], gap: Double) {
+        stop()
+        guard let first = hits.first else { return }
+        let format = (rate: first.clip.sampleRate, channels: first.clip.channelCount)
+        let buffers = hits.compactMap { hit -> (AVAudioPCMBuffer, Double, Double)? in
+            let clip = hit.clip.conformed(sampleRate: format.rate, channelCount: format.channels)
+            return clip.makeBuffer(0..<clip.frameCount).map { ($0, hit.semitones, hit.volumeDb) }
+        }
+        guard let bufferFormat = buffers.first?.0.format, prepare(bufferFormat) else { return }
+        generation += 1
+        showsPlayhead = false
+        isPlaying = true
+        playHit(buffers, index: 0, generation: generation, gap: gap)
+    }
+
+    private func playHit(_ hits: [(AVAudioPCMBuffer, Double, Double)], index: Int, generation current: Int, gap: Double) {
+        guard generation == current else { return }
+        guard index < hits.count else {
+            stop()
+            return
+        }
+        let (buffer, semitones, volumeDb) = hits[index]
+        varispeed.rate = Float(pow(2, semitones / 12))
+        node.volume = Float(pow(10, volumeDb / 20))
+        previewPitch = semitones
+        guard guarded({ node.stop() }) else { return }
+        node.scheduleBuffer(buffer, at: nil, options: [], completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + gap) {
+                MainActor.assumeIsolated { self?.playHit(hits, index: index + 1, generation: current, gap: gap) }
+            }
+        }
+        _ = guarded { node.play() }
+    }
+
     private func startTimer() {
         let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
@@ -224,6 +268,7 @@ final class Player {
         timer = nil
         if isPlaying || node.isPlaying { _ = ObjCException.catching { node.stop() } }
         isPlaying = false
+        showsPlayhead = true
         previewPitch = nil
     }
 

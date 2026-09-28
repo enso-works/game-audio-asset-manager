@@ -7,6 +7,7 @@ struct GameAudioAssetManagerApp: App {
     @State private var editor = EditorModel()
     @State private var navigation = Navigation()
     @State private var exportService = ExportService()
+    @State private var auditioner = EventAuditioner()
 
     var body: some Scene {
         Window("Game Audio Asset Manager", id: "main") {
@@ -16,12 +17,14 @@ struct GameAudioAssetManagerApp: App {
                 .environment(editor)
                 .environment(navigation)
                 .environment(exportService)
+                .environment(auditioner)
                 .frame(minWidth: 1100, minHeight: 680)
                 .onAppear {
                     downloads.library = library
                     editor.library = library
                     editor.exportService = exportService
                     exportService.library = library
+                    auditioner.player = editor.player
                     library.onMove = { old, new in
                         editor.fileMoved(from: old, to: new)
                         if navigation.selection == .file(old) { navigation.selection = .file(new) }
