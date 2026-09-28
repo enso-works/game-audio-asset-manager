@@ -3,6 +3,8 @@ import Foundation
 /// A project sound and where it goes in the export folder.
 struct ProjectExportItem: Identifiable, Sendable {
     let input: URL
+    /// Path relative to the project folder, as stored in events.
+    let sourcePath: String
     /// Output path relative to the export folder, mirroring the project folders.
     let relativeOutput: String
     let settings: ExportSettings
@@ -17,6 +19,7 @@ struct ProjectExportItem: Identifiable, Sendable {
 struct SpriteExport: Identifiable, Sendable {
     struct Member: Sendable {
         let input: URL
+        let sourcePath: String
         let key: String
         let meta: SoundMeta
     }
@@ -33,6 +36,8 @@ struct SpriteExport: Identifiable, Sendable {
 struct ProjectExportPlan: Sendable {
     var items: [ProjectExportItem] = []
     var sprites: [SpriteExport] = []
+    var events: [String: SoundEvent] = [:]
+    var buses: [AudioBus] = Mix.defaultBuses
 
     var soundCount: Int { items.count + sprites.reduce(0) { $0 + $1.members.count } }
     func pendingCount(onlyChanged: Bool) -> Int {
@@ -47,11 +52,14 @@ struct ProjectExportReport: Sendable {
     var extraFiles: [URL] = []
     /// Sounds that exported successfully, with the settings used.
     var succeeded: [(URL, ExportSettings)] = []
+    /// Things worth knowing that aren't failures (e.g. skipped events).
+    var notes: [String] = []
 }
 
 /// Everything the manifest and generated code need to know about one exported sound.
 struct ExportedSound: Sendable {
     let key: String
+    let sourcePath: String
     let file: String
     let format: ExportFormat
     var duration: Double?
@@ -60,6 +68,17 @@ struct ExportedSound: Sendable {
     let source: String?
     /// Offset and length inside a sprite file, in seconds.
     var spriteStart: Double?
+}
+
+/// An event with its sounds resolved to exported files.
+struct ExportedEvent: Sendable {
+    let key: String
+    let event: SoundEvent
+    let sounds: [(sound: ExportedSound, weight: Double)]
+    let missing: [String]
+
+    /// Godot plays individual files; sounds packed into web sprites are left out.
+    var godotSounds: [(sound: ExportedSound, weight: Double)] { sounds.filter { $0.sound.spriteStart == nil } }
 }
 
 /// Exports a project (or one folder of it) into the game folder, mirroring the folder structure.
@@ -71,6 +90,8 @@ enum ProjectExporter {
     @MainActor
     static func plan(library: Library, scope: URL?, destination: URL) -> ProjectExportPlan {
         var plan = ProjectExportPlan()
+        plan.events = library.events
+        plan.buses = Mix.sorted(library.config.mixBuses)
         var used = Set<String>()
         var spriteMembers: [String: [SpriteExport.Member]] = [:]
         var spriteStale: [String: Bool] = [:]
@@ -102,7 +123,7 @@ enum ProjectExporter {
                 let key = ((sprite.split(separator: "/").map { Exporter.sanitize(String($0)) })
                     + (inner as NSString).deletingPathExtension.split(separator: "/").map { Exporter.sanitize(String($0)) })
                     .joined(separator: "/")
-                spriteMembers[sprite, default: []].append(SpriteExport.Member(input: file, key: key, meta: meta))
+                spriteMembers[sprite, default: []].append(SpriteExport.Member(input: file, sourcePath: relative, key: key, meta: meta))
                 spriteStale[sprite] = (spriteStale[sprite] ?? false) || settingsChanged || (meta.modified ?? .distantPast) > sourceDate
                     || library.lastExportSettings(for: file) == nil
                 continue
@@ -112,7 +133,7 @@ enum ProjectExporter {
             let target = destination.appendingPathComponent(output)
             let outputDate = (try? target.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
             let stale = settingsChanged || (outputDate.map { $0 < sourceDate || $0 < (meta.modified ?? .distantPast) } ?? true)
-            plan.items.append(ProjectExportItem(input: file, relativeOutput: output, settings: settings, meta: meta, isStale: stale))
+            plan.items.append(ProjectExportItem(input: file, sourcePath: relative, relativeOutput: output, settings: settings, meta: meta, isStale: stale))
         }
 
         for (folder, members) in spriteMembers.sorted(by: { $0.key < $1.key }) {
@@ -164,16 +185,33 @@ enum ProjectExporter {
 
         guard wholeProject else { return report }
         let sounds = await describe(plan, destination: destination)
-        let generated: [(Bool, String, () -> String)] = [
-            (options.writeManifest, manifestName, { manifest(sounds, projectName: projectName) }),
+        let events = exportedEvents(plan, sounds: sounds)
+        for event in events where !event.missing.isEmpty {
+            report.notes.append("Event \(event.key): \(event.missing.count) sound(s) not in a project folder were skipped (\(event.missing.joined(separator: ", "))).")
+        }
+        var generated: [(Bool, String, () -> String)] = [
+            (options.writeManifest, manifestName, { manifest(sounds, events: events, buses: plan.buses, projectName: projectName) }),
             (options.writeCredits, creditsName, { credits(plan, projectName: projectName) ?? "" }),
-            (options.generateGodot, CodeGenerator.godotName, { CodeGenerator.godot(sounds, projectName: projectName, exportFolder: destination) }),
+            (options.generateGodot, CodeGenerator.godotName, { CodeGenerator.godot(sounds, events: events, buses: plan.buses, projectName: projectName, exportFolder: destination) }),
             (options.generateTypeScript, CodeGenerator.typeScriptName, { CodeGenerator.typeScript(sounds, projectName: projectName) }),
+            (options.generateTypeScript, WebAudioGenerator.fileName, { WebAudioGenerator.engine(events: events, buses: plan.buses, projectName: projectName) }),
         ]
+        if options.generateGodot {
+            let base = CodeGenerator.godotResourcePath(for: destination)
+            if base.isEmpty, !events.isEmpty {
+                report.notes.append("Godot event resources need the export folder inside a Godot project (next to or below project.godot); they were skipped.")
+            } else {
+                generated.append((true, CodeGenerator.godotBusLayoutName, { CodeGenerator.godotBusLayout(plan.buses) }))
+                for event in events where !event.godotSounds.isEmpty {
+                    generated.append((true, CodeGenerator.godotEventPath(event.key), { CodeGenerator.godotEvent(event, resourceBase: base) }))
+                }
+            }
+        }
         for (enabled, name, text) in generated where enabled {
             let content = text()
             guard !content.isEmpty else { continue }
             let url = destination.appendingPathComponent(name)
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             if (try? content.write(to: url, atomically: true, encoding: .utf8)) != nil {
                 report.extraFiles.append(url)
             }
@@ -260,7 +298,7 @@ enum ProjectExporter {
         var sounds: [ExportedSound] = []
         for item in plan.items {
             sounds.append(ExportedSound(
-                key: item.key, file: item.relativeOutput, format: item.settings.format,
+                key: item.key, sourcePath: item.sourcePath, file: item.relativeOutput, format: item.settings.format,
                 duration: await Exporter.duration(of: destination.appendingPathComponent(item.relativeOutput)),
                 loop: item.meta.loop, tempo: item.meta.tempo, source: item.meta.sourceURL
             ))
@@ -270,7 +308,7 @@ enum ProjectExporter {
             for member in sprite.members {
                 let span = layout[member.key]
                 sounds.append(ExportedSound(
-                    key: member.key, file: sprite.relativeOutput, format: sprite.settings.format,
+                    key: member.key, sourcePath: member.sourcePath, file: sprite.relativeOutput, format: sprite.settings.format,
                     duration: span?.duration, loop: nil, tempo: member.meta.tempo, source: member.meta.sourceURL,
                     spriteStart: span?.start
                 ))
@@ -289,8 +327,22 @@ enum ProjectExporter {
         return groups.filter { $0.value.count >= 2 }.mapValues { $0.sorted() }
     }
 
+    /// Events resolved to exported sounds; sounds outside project folders (e.g. the Inbox) are listed as missing.
+    static func exportedEvents(_ plan: ProjectExportPlan, sounds: [ExportedSound]) -> [ExportedEvent] {
+        let bySource = Dictionary(sounds.map { ($0.sourcePath, $0) }, uniquingKeysWith: { a, _ in a })
+        return plan.events.keys.sorted().compactMap { key in
+            let event = plan.events[key]!
+            var members: [(sound: ExportedSound, weight: Double)] = []
+            var missing: [String] = []
+            for sound in event.sounds {
+                if let exported = bySource[sound.path] { members.append((exported, sound.weight)) } else { missing.append(sound.path) }
+            }
+            return ExportedEvent(key: key, event: event, sounds: members, missing: missing)
+        }
+    }
+
     /// JSON for three.js (or any engine): sound key -> file, duration, loop points, tempo, sprite offsets.
-    static func manifest(_ sounds: [ExportedSound], projectName: String) -> String {
+    static func manifest(_ sounds: [ExportedSound], events: [ExportedEvent] = [], buses: [AudioBus] = [], projectName: String) -> String {
         var entries: [String: [String: Any]] = [:]
         for sound in sounds {
             var entry: [String: Any] = ["file": sound.file, "format": sound.format.rawValue, "loop": sound.loop != nil]
@@ -312,6 +364,23 @@ enum ProjectExporter {
             "generated": ISO8601DateFormatter().string(from: Date()),
             "sounds": entries,
             "groups": groups(sounds.map(\.key)),
+            "events": Dictionary(uniqueKeysWithValues: events.map { event -> (String, [String: Any]) in
+                var entry: [String: Any] = [
+                    "sounds": event.sounds.map { ["sound": $0.sound.key, "weight": $0.weight] },
+                    "playback": event.event.playback.rawValue,
+                    "pitchSemitones": event.event.pitchSemitones,
+                    "volumeDb": event.event.volumeDb,
+                    "volumeRandomDb": event.event.volumeRandomDb,
+                    "bus": event.event.bus,
+                    "maxInstances": event.event.maxInstances,
+                    "cooldownMs": event.event.cooldownMs,
+                ]
+                if let spatial = event.event.spatial {
+                    entry["spatial"] = ["attenuation": spatial.attenuation.rawValue, "unitSize": spatial.unitSize, "maxDistance": spatial.maxDistance]
+                }
+                return (event.key, entry)
+            }),
+            "buses": buses.map { ["path": $0.path, "volumeDb": $0.volumeDb] },
         ]
         let data = (try? JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])) ?? Data()
         return (String(data: data, encoding: .utf8) ?? "{}") + "\n"

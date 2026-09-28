@@ -3,11 +3,11 @@ import XCTest
 
 final class CodeGenerationTests: XCTestCase {
     private let sounds = [
-        ExportedSound(key: "music/theme", file: "music/theme.ogg", format: .ogg, duration: 12.5,
+        ExportedSound(key: "music/theme", sourcePath: "music/theme.wav", file: "music/theme.ogg", format: .ogg, duration: 12.5,
                       loop: LoopPoints(start: 2, end: 10), tempo: TempoInfo(bpm: 120, offset: 0, beatsPerBar: 4), source: nil),
-        ExportedSound(key: "sfx/jump_01", file: "sfx/jump_01.wav", format: .wav, duration: 0.5, loop: nil, tempo: nil, source: nil),
-        ExportedSound(key: "sfx/jump_02", file: "sfx/jump_02.wav", format: .wav, duration: 0.45, loop: nil, tempo: nil, source: nil),
-        ExportedSound(key: "sfx/ui/click", file: "sfx/ui.ogg", format: .ogg, duration: 0.2, loop: nil, tempo: nil, source: nil, spriteStart: 0.1),
+        ExportedSound(key: "sfx/jump_01", sourcePath: "sfx/jump_01.wav", file: "sfx/jump_01.wav", format: .wav, duration: 0.5, loop: nil, tempo: nil, source: nil),
+        ExportedSound(key: "sfx/jump_02", sourcePath: "sfx/jump_02.wav", file: "sfx/jump_02.wav", format: .wav, duration: 0.45, loop: nil, tempo: nil, source: nil),
+        ExportedSound(key: "sfx/ui/click", sourcePath: "sfx/ui/click.wav", file: "sfx/ui.ogg", format: .ogg, duration: 0.2, loop: nil, tempo: nil, source: nil, spriteStart: 0.1),
     ]
 
     func testGroupsNeedTwoNumberedMembers() {

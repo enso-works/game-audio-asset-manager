@@ -3,13 +3,14 @@ import Foundation
 /// Writes typed access code for the exported sounds, so games reference sounds by key instead of paths.
 enum CodeGenerator {
     static let godotName = "sounds.gd"
+    static let godotBusLayoutName = "audio_buses.tres"
     static let typeScriptName = "sounds.ts"
 
     // MARK: - Godot
 
     /// A `Sounds` class with preloaded streams, a lookup by key, variation groups, and loop settings
     /// for OGG/MP3 (which can't store loop points Godot reads). Sprite sounds are web-only and skipped.
-    static func godot(_ sounds: [ExportedSound], projectName: String, exportFolder: URL) -> String {
+    static func godot(_ sounds: [ExportedSound], events: [ExportedEvent] = [], buses: [AudioBus] = [], projectName: String, exportFolder: URL) -> String {
         let playable = sounds.filter { $0.spriteStart == nil }
         guard !playable.isEmpty else { return "" }
         let base = godotResourcePath(for: exportFolder)
@@ -63,7 +64,129 @@ enum CodeGenerator {
             "\treturn GROUPS[group].pick_random()",
             "",
         ]
+        if !base.isEmpty {
+            lines += godotEventCode(events.filter { !$0.godotSounds.isEmpty }, buses: buses, base: base)
+        }
         return lines.joined(separator: "\n")
+    }
+
+    // MARK: - Godot events and buses
+
+    /// Godot bus names: the last path component, or the full path joined with "_" when that clashes.
+    static func godotBusNames(_ buses: [AudioBus]) -> [String: String] {
+        var counts: [String: Int] = [:]
+        for bus in buses { counts[bus.name, default: 0] += 1 }
+        var names = ["Master": "Master"]
+        for bus in buses {
+            names[bus.path] = counts[bus.name, default: 0] > 1 ? bus.path.replacingOccurrences(of: "/", with: "_") : bus.name
+        }
+        return names
+    }
+
+    /// AudioBusLayout resource: every bus sends to its parent (or Master).
+    static func godotBusLayout(_ buses: [AudioBus]) -> String {
+        let names = godotBusNames(buses)
+        var lines = ["[gd_resource type=\"AudioBusLayout\" format=3]", "", "[resource]"]
+        for (index, bus) in Mix.sorted(buses).enumerated() {
+            let n = index + 1
+            lines += [
+                "bus/\(n)/name = &\"\(names[bus.path]!)\"",
+                "bus/\(n)/solo = false",
+                "bus/\(n)/mute = false",
+                "bus/\(n)/bypass_fx = false",
+                "bus/\(n)/volume_db = \(godotNumber(bus.volumeDb))",
+                "bus/\(n)/send = &\"\(names[bus.parentPath ?? "Master"] ?? "Master")\"",
+            ]
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    static func godotEventPath(_ key: String) -> String {
+        "events/" + Exporter.sanitizePath(key) + ".tres"
+    }
+
+    /// AudioStreamRandomizer resource for one event.
+    static func godotEvent(_ event: ExportedEvent, resourceBase: String) -> String {
+        let members = event.godotSounds
+        var lines = ["[gd_resource type=\"AudioStreamRandomizer\" load_steps=\(members.count + 1) format=3]", ""]
+        for (index, member) in members.enumerated() {
+            lines.append("[ext_resource type=\"AudioStream\" path=\"\(resourceBase)\(member.sound.file)\" id=\"\(index + 1)\"]")
+        }
+        lines += [
+            "",
+            "[resource]",
+            "playback_mode = \(event.event.playback.godotValue)",
+            "random_pitch = \(godotNumber(pow(2, event.event.pitchSemitones / 12)))",
+            "random_volume_offset_db = \(godotNumber(event.event.volumeRandomDb))",
+            "streams_count = \(members.count)",
+        ]
+        for (index, member) in members.enumerated() {
+            lines.append("stream_\(index)/stream = ExtResource(\"\(index + 1)\")")
+            lines.append("stream_\(index)/weight = \(godotNumber(member.weight))")
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    private static func godotEventCode(_ events: [ExportedEvent], buses: [AudioBus], base: String) -> [String] {
+        let busNames = godotBusNames(buses)
+        var lines = ["", "## Sound events: randomized streams with bus, volume, polyphony and 3D settings.", "const EVENTS := {"]
+        lines += events.map { "\t\"\($0.key)\": preload(\"\(base)\(godotEventPath($0.key))\")," }
+        lines += ["}", "", "const EVENT_SETTINGS := {"]
+        for event in events {
+            let e = event.event
+            var fields = [
+                "\"bus\": &\"\(busNames[e.bus] ?? "Master")\"",
+                "\"volume_db\": \(godotNumber(e.volumeDb))",
+                "\"max_polyphony\": \(e.maxInstances)",
+                "\"cooldown_ms\": \(godotNumber(e.cooldownMs))",
+            ]
+            if let spatial = e.spatial {
+                fields.append("\"spatial\": {\"attenuation\": \(spatial.attenuation.godotValue), \"unit_size\": \(godotNumber(spatial.unitSize)), \"max_distance\": \(godotNumber(spatial.maxDistance))}")
+            }
+            lines.append("\t\"\(event.key)\": {\(fields.joined(separator: ", "))},")
+        }
+        lines += [
+            "}",
+            "",
+            "static var _last_played_ms := {}",
+            "",
+            "## Applies the project's mixer buses. Call once at startup, or set audio_buses.tres as the default bus layout.",
+            "static func apply_bus_layout() -> void:",
+            "\tAudioServer.set_bus_layout(load(\"\(base)\(godotBusLayoutName)\"))",
+            "",
+            "## Sets up an AudioStreamPlayer (2D or 3D) for an event: stream, bus, volume, polyphony, 3D falloff.",
+            "static func configure(player: Node, key: String) -> void:",
+            "\tvar settings: Dictionary = EVENT_SETTINGS[key]",
+            "\tplayer.set(\"stream\", EVENTS[key])",
+            "\tplayer.set(\"bus\", settings[\"bus\"])",
+            "\tplayer.set(\"volume_db\", settings[\"volume_db\"])",
+            "\tif settings[\"max_polyphony\"] > 0:",
+            "\t\tplayer.set(\"max_polyphony\", settings[\"max_polyphony\"])",
+            "\tif player is AudioStreamPlayer3D and settings.has(\"spatial\"):",
+            "\t\tvar spatial: Dictionary = settings[\"spatial\"]",
+            "\t\tplayer.set(\"attenuation_model\", spatial[\"attenuation\"])",
+            "\t\tplayer.set(\"unit_size\", spatial[\"unit_size\"])",
+            "\t\tplayer.set(\"max_distance\", spatial[\"max_distance\"])",
+            "",
+            "## Plays an event on a player. Returns false while the event is cooling down.",
+            "static func play(key: String, player: Node) -> bool:",
+            "\tvar settings: Dictionary = EVENT_SETTINGS[key]",
+            "\tvar now := Time.get_ticks_msec()",
+            "\tif now - int(_last_played_ms.get(key, -1000000)) < settings[\"cooldown_ms\"]:",
+            "\t\treturn false",
+            "\t_last_played_ms[key] = now",
+            "\tif player.get(\"stream\") != EVENTS[key]:",
+            "\t\tconfigure(player, key)",
+            "\tplayer.call(\"play\")",
+            "\treturn true",
+            "",
+        ]
+        return lines
+    }
+
+    private static func godotNumber(_ value: Double) -> String {
+        let rounded = (value * 10_000).rounded() / 10_000
+        return rounded == rounded.rounded() ? String(format: "%.1f", rounded) : String(rounded)
     }
 
     /// `res://...` path of the export folder if it sits inside a Godot project, otherwise a
