@@ -22,12 +22,13 @@ final class Library {
     @ObservationIgnored var onMove: ((URL, URL) -> Void)?
 
     init() {
+        LegacyMigration.migratePreferences()
         let defaults = UserDefaults.standard
         let fallback = FileManager.default.urls(for: .musicDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("AudioPrepare", isDirectory: true)
+            .appendingPathComponent("Game Audio Asset Manager", isDirectory: true)
         if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
             // Unit tests host the app; keep them away from the real library.
-            root = FileManager.default.temporaryDirectory.appendingPathComponent("AudioPrepareTests-\(UUID().uuidString)", isDirectory: true)
+            root = FileManager.default.temporaryDirectory.appendingPathComponent("GameAudioAssetManagerTests-\(UUID().uuidString)", isDirectory: true)
         } else {
             root = defaults.string(forKey: "libraryRoot").map { URL(fileURLWithPath: $0, isDirectory: true) } ?? fallback
         }
@@ -98,7 +99,10 @@ final class Library {
     }
 
     private func openCurrentProject() {
-        UserDefaults.standard.set(currentProject, forKey: "currentProject")
+        // Unit tests host the app; they must not change the real app's settings.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+            UserDefaults.standard.set(currentProject, forKey: "currentProject")
+        }
         try? FileManager.default.createDirectory(at: inboxURL, withIntermediateDirectories: true)
         switch ProjectConfig.read(from: projectURL) {
         case .loaded(let loaded):

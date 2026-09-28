@@ -2,7 +2,7 @@
 
 **Status: proposal, not started.**
 
-Today Audio Prepare manages sound **files**: it cuts them, cleans them and exports them. A game also needs to know how each sound **plays**:
+Today Game Audio Asset Manager manages sound **files**: it cuts them, cleans them and exports them. A game also needs to know how each sound **plays**:
 
 - which variant to pick, and at what pitch and volume;
 - which mixer bus it goes through;

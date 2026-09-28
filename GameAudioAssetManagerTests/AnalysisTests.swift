@@ -1,6 +1,6 @@
 import AVFoundation
 import XCTest
-@testable import Audio_Prepare
+@testable import GameAudioAssetManager
 
 final class AnalysisTests: XCTestCase {
     private let rate = 48_000.0

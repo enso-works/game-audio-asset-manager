@@ -1,4 +1,4 @@
-name: AudioPrepare
+name: GameAudioAssetManager
 options:
   bundleIdPrefix: com.bavrk
   deploymentTarget:
@@ -9,20 +9,21 @@ settings:
     SWIFT_VERSION: "5.0"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
 targets:
-  AudioPrepare:
+  GameAudioAssetManager:
     type: application
     platform: macOS
     sources:
-      - AudioPrepare
+      - GameAudioAssetManager
     scheme:
       testTargets:
-        - AudioPrepareTests
+        - GameAudioAssetManagerTests
     settings:
       base:
-        PRODUCT_NAME: Audio Prepare
-        PRODUCT_BUNDLE_IDENTIFIER: com.bavrk.audioprepare
+        PRODUCT_NAME: Game Audio Asset Manager
+        PRODUCT_MODULE_NAME: GameAudioAssetManager
+        PRODUCT_BUNDLE_IDENTIFIER: com.bavrk.gameaudioassetmanager
         GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Audio Prepare
+        INFOPLIST_KEY_CFBundleDisplayName: Game Audio Asset Manager
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
         INFOPLIST_KEY_NSHumanReadableCopyright: ""
         MARKETING_VERSION: "1.0"
@@ -32,19 +33,19 @@ targets:
         ENABLE_HARDENED_RUNTIME: NO
         ENABLE_APP_SANDBOX: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        SWIFT_OBJC_BRIDGING_HEADER: AudioPrepare/Support/AudioPrepare-Bridging-Header.h
-  AudioPrepareTests:
+        SWIFT_OBJC_BRIDGING_HEADER: GameAudioAssetManager/Support/GameAudioAssetManager-Bridging-Header.h
+  GameAudioAssetManagerTests:
     type: bundle.unit-test
     platform: macOS
     sources:
-      - AudioPrepareTests
+      - GameAudioAssetManagerTests
     dependencies:
-      - target: AudioPrepare
+      - target: GameAudioAssetManager
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_BUNDLE_IDENTIFIER: com.bavrk.audioprepare.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.bavrk.gameaudioassetmanager.tests
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Manual
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Audio Prepare.app/Contents/MacOS/Audio Prepare"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Game Audio Asset Manager.app/Contents/MacOS/Game Audio Asset Manager"
         BUNDLE_LOADER: "$(TEST_HOST)"

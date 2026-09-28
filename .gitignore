@@ -1,5 +1,5 @@
 build/
-AudioPrepare.xcodeproj/
+GameAudioAssetManager.xcodeproj/
 .DS_Store
 xcuserdata/
 build-debug/

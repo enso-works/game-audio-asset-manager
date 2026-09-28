@@ -1,5 +1,5 @@
 import XCTest
-@testable import Audio_Prepare
+@testable import GameAudioAssetManager
 
 final class ExportTests: XCTestCase {
     func testSanitize() {

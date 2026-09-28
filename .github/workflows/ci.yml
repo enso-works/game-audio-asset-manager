@@ -24,8 +24,8 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild test \
-            -project AudioPrepare.xcodeproj \
-            -scheme AudioPrepare \
+            -project GameAudioAssetManager.xcodeproj \
+            -scheme GameAudioAssetManager \
             -destination 'platform=macOS' \
             -derivedDataPath build-test \
             | grep -E "error:|warning: |Test Case .*(failed|skipped)|Executed|TEST (SUCCEEDED|FAILED)|BUILD (SUCCEEDED|FAILED)"

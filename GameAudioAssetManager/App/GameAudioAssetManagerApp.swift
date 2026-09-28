@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct AudioPrepareApp: App {
+struct GameAudioAssetManagerApp: App {
     @State private var library = Library()
     @State private var downloads = DownloadQueue()
     @State private var editor = EditorModel()
@@ -9,7 +9,7 @@ struct AudioPrepareApp: App {
     @State private var exportService = ExportService()
 
     var body: some Scene {
-        Window("Audio Prepare", id: "main") {
+        Window("Game Audio Asset Manager", id: "main") {
             ContentView()
                 .environment(library)
                 .environment(downloads)

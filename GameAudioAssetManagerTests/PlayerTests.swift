@@ -1,6 +1,6 @@
 import AVFoundation
 import XCTest
-@testable import Audio_Prepare
+@testable import GameAudioAssetManager
 
 /// Renders the player offline (no audio device) to check streamed playback is gapless and exact.
 @MainActor

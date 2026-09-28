@@ -25,7 +25,7 @@ struct SoundMeta: Codable, Equatable {
     }
 }
 
-/// Contents of `<project>/.audioprepare/project.json`.
+/// Contents of `<project>/.game-audio-asset-manager/project.json`.
 struct ProjectConfig: Codable {
     var exportFolder: String?
     var defaultSettings = ExportPreset.godotSFX.settings
@@ -41,7 +41,7 @@ struct ProjectConfig: Codable {
 
     var exportOptions: ExportOptions { options ?? ExportOptions() }
 
-    static let folderName = ".audioprepare"
+    static let folderName = ".game-audio-asset-manager"
     static let fileName = "project.json"
 
     static func url(for project: URL) -> URL {
@@ -61,6 +61,7 @@ struct ProjectConfig: Codable {
     }
 
     static func read(from project: URL) -> LoadResult {
+        LegacyMigration.migrateProjectFolder(in: project, to: folderName)
         let file = url(for: project)
         guard let data = try? Data(contentsOf: file) else { return .missing }
         if let config = try? JSONDecoder.project.decode(ProjectConfig.self, from: data) { return .loaded(config) }

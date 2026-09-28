@@ -1,4 +1,4 @@
-# Audio Prepare
+# Game Audio Asset Manager
 
 A native macOS app that takes game audio from "I found a sound on YouTube" to "it's in the game, looped, loudness-matched and typed in code". It is built for a Godot and three.js pipeline and runs entirely on your Mac.
 
@@ -8,7 +8,7 @@ A native macOS app that takes game audio from "I found a sound on YouTube" to "i
 
 Our game audio workflow used to span five tools: a YouTube downloader, an audio editor, a batch converter, a folder of loose files, and hand-written code that referenced sound paths. Every new sound meant repeating the same steps: download, cut, normalize, convert, rename to `snake_case`, copy into the game, and fix the loop in Godot's import dock.
 
-Audio Prepare handles the whole trip in one place:
+Game Audio Asset Manager handles the whole trip in one place:
 
 1. **Find**: search YouTube in the app, or paste a batch of links. You can download only the part you need, for example `1:30-2:05`.
 2. **Clean**: trim, fade, normalize, denoise, cut rumble and hiss, remove DC, make mono.
@@ -19,7 +19,7 @@ Audio Prepare handles the whole trip in one place:
 
 ## How it was built
 
-Audio Prepare was built in a series of short sessions with an AI coding agent (Claude Code), starting from one sentence: *"a simple audio clip editor to cut files for game assets, plus a YouTube to MP3 downloader for 20 links at a time"*. Each round started from what was missing in real use:
+It started as **Audio Prepare**, a small clip editor, and was built in a series of short sessions with an AI coding agent (Claude Code), starting from one sentence: *"a simple audio clip editor to cut files for game assets, plus a YouTube to MP3 downloader for 20 links at a time"*. Each round started from what was missing in real use:
 
 | Round | What was added |
 | --- | --- |
@@ -85,14 +85,14 @@ Hover over a tool for a moment to see what it does and its shortcut:
 
 ### Organize
 
-Each game gets a project in `~/Music/AudioPrepare/projects/<Name>/`:
+Each game gets a project in `~/Music/Game Audio Asset Manager/projects/<Name>/`. Libraries created under the old name stay in `~/Music/AudioPrepare`.
 
 ```
 <Name>/
   Inbox/                        raw downloads and imports (never exported)
   sfx/player/jump_01.wav        your folders, mirrored on export
   music/drum_loop.wav
-  .audioprepare/project.json    loops, regions, tempo, sources, folder formats
+  .game-audio-asset-manager/project.json    loops, regions, tempo, sources, folder formats
 ```
 
 ![Folder packed as an audio sprite](docs/screenshots/sprite-folder.png)
