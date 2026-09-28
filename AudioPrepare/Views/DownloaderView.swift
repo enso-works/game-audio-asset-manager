@@ -64,6 +64,7 @@ struct DownloaderView: View {
             }
         }
         .padding(16)
+        .frame(maxHeight: .infinity, alignment: .top)
         .navigationTitle("YouTube to MP3")
         .onChange(of: queue.maxConcurrent) { queue.pump() }
         .onAppear {
