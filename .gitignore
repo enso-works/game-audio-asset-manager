@@ -4,3 +4,5 @@ GameAudioAssetManager.xcodeproj/
 xcuserdata/
 build-debug/
 build-test/
+build-release/
+dist/

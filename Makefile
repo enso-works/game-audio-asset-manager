@@ -1,6 +1,6 @@
 APP := build/Build/Products/Release/Game Audio Asset Manager.app
 
-.PHONY: project build test run install clean
+.PHONY: project build test run install release clean
 
 project:
 	xcodegen generate
@@ -18,5 +18,9 @@ install: build
 	rm -rf "/Applications/Game Audio Asset Manager.app"
 	cp -R "$(APP)" /Applications/
 
+# Signed, notarized DMG and zip in dist/. See "Releasing" in the README.
+release:
+	scripts/release.sh
+
 clean:
-	rm -rf build build-test build-debug GameAudioAssetManager.xcodeproj
+	rm -rf build build-test build-debug build-release dist GameAudioAssetManager.xcodeproj
