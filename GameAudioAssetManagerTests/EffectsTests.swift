@@ -10,9 +10,9 @@ final class EffectsTests: XCTestCase {
 
     private func db(_ value: Double) -> Double { 20 * log10(max(value, 1e-12)) }
 
-    /// Tone for 1-3 s over steady white noise; noise-only elsewhere.
+    /// Tone for 1-3 s over steady white noise; noise-only elsewhere. The noise is seeded so results don't vary per run.
     private func noisyTone() -> (clip: AudioClip, tone: [Float]) {
-        var generator = SystemRandomNumberGenerator()
+        var generator = SeededGenerator(seed: 42)
         let n = Int(rate * 4)
         var tone = [Float](repeating: 0, count: n)
         for i in Int(rate)..<Int(rate * 3) { tone[i] = Float(0.4 * sin(2 * .pi * 440 * Double(i) / rate)) }
@@ -91,5 +91,18 @@ final class EffectsTests: XCTestCase {
         let wet = try XCTUnwrap(Effects.reverb(clip, 0..<clip.frameCount, preset: .largeHall, mix: 50, tail: 1))
         XCTAssertEqual(wet.frameCount, Int(rate * 2))
         XCTAssertGreaterThan(rms(wet.channels[0][Int(rate * 0.3)..<Int(rate * 0.6)]), 0.001, "reverb continues after the dry sound ends")
+    }
+}
+
+/// SplitMix64: a tiny deterministic generator for reproducible test noise.
+private struct SeededGenerator: RandomNumberGenerator {
+    var state: UInt64
+    init(seed: UInt64) { state = seed }
+    mutating func next() -> UInt64 {
+        state &+= 0x9E37_79B9_7F4A_7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        return z ^ (z >> 31)
     }
 }
