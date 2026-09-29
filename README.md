@@ -2,6 +2,8 @@
 
 A native macOS app that takes game audio from "I found a sound on YouTube" to "it's in the game, looped, loudness-matched and typed in code". It is built for a Godot and three.js pipeline and runs entirely on your Mac.
 
+**[Download the latest release](https://github.com/enso-works/game-audio-asset-manager/releases/latest)** or `brew install --cask enso-works/tap/game-audio-asset-manager`. See [Install](#install).
+
 ![Editor with a looped drum track: waveform, spectrogram, beat grid and loop markers](docs/screenshots/editor.png)
 
 ## Why this exists
@@ -32,6 +34,7 @@ It started as **Audio Prepare**, a small clip editor, and was built in a series 
 | 6 | Performance: selection dragging went from ~400 ms to ~5 ms per mouse move (details below), and playback now streams |
 | 7 | Denoise, pitch and speed, reverb, compressor, hover cards that explain every tool |
 | 8 | Renamed to Game Audio Asset Manager. Sound events and mixer buses, exported as native Godot resources and a generated Web Audio engine with 3D audio |
+| 9 | First public release: Developer ID signing, notarization, a DMG, Sparkle auto-updates and a Homebrew cask, all built by a tag-triggered workflow |
 
 Every feature was checked against something measurable before it was committed:
 
@@ -182,7 +185,35 @@ Press **?** in the editor, or use Help > Keyboard Shortcuts (Cmd /). Single keys
 - **Accelerate / vDSP** for filters, the spectrogram, the denoiser (spectral subtraction with smoothed gains), tempo detection (spectral flux and autocorrelation), and peak analysis.
 - **ffmpeg** for encoding, resampling and loudness measurement. **yt-dlp** for downloads.
 
-## Setup
+## Install
+
+Requires macOS 14 (Sonoma) or newer, on Apple Silicon or Intel.
+
+**Homebrew** (installs ffmpeg and yt-dlp too):
+
+```sh
+brew install --cask enso-works/tap/game-audio-asset-manager
+```
+
+**DMG:** download `GameAudioAssetManager-<version>-macos.dmg` from [Releases](https://github.com/enso-works/game-audio-asset-manager/releases/latest), open it and drag the app to Applications. Then install the tools it uses:
+
+```sh
+brew install ffmpeg yt-dlp
+```
+
+The app is signed with a Developer ID and notarized by Apple, so it opens without Gatekeeper warnings. Each release lists SHA-256 checksums.
+
+If YouTube downloads start failing, update yt-dlp: `brew upgrade yt-dlp`.
+
+### Updates
+
+The app checks for updates once a day and offers to install them (Sparkle, signed with an EdDSA key). Use **Game Audio Asset Manager > Check for Updates...**, or turn automatic checks off in Settings. Homebrew installs update the same way, because the cask is marked `auto_updates`.
+
+### Uninstall
+
+Quit the app and move it to the Trash, or run `brew uninstall --cask game-audio-asset-manager`. Add `--zap` to also remove preferences and caches. Your sound library in `~/Music/Game Audio Asset Manager` is never touched.
+
+## Build from source
 
 ```sh
 brew install yt-dlp ffmpeg xcodegen
@@ -191,7 +222,39 @@ make test      # run the unit tests
 make install   # copy to /Applications
 ```
 
-If YouTube downloads start failing, update yt-dlp: `brew upgrade yt-dlp`.
+Builds from source don't update themselves; only release builds carry the update feed.
+
+## Releasing
+
+1. Set `MARKETING_VERSION` in `project.yml` and add a `## <version>` section to `CHANGELOG.md`.
+2. Commit, then tag and push: `git tag v0.2.0 && git push origin main v0.2.0`.
+
+The [Release workflow](.github/workflows/release.yml) then:
+
+- builds a universal app and signs it with hardened runtime;
+- notarizes and staples the app and the DMG;
+- publishes the GitHub release with the changelog section as notes;
+- uploads the DMG, the zip, the checksums and the Sparkle `appcast.xml`;
+- updates the cask in [enso-works/homebrew-tap](https://github.com/enso-works/homebrew-tap).
+
+Repository secrets used by the workflow:
+
+| Secret | Contents |
+| --- | --- |
+| `MACOS_CERT_P12`, `MACOS_CERT_PASSWORD` | Developer ID Application certificate (base64 `.p12`) and its password |
+| `MACOS_SIGN_IDENTITY` | `Developer ID Application: Name (TEAMID)` |
+| `APPLE_API_KEY_P8`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER` | App Store Connect API key for `notarytool` (base64 `.p8`) |
+| `SPARKLE_PRIVATE_KEY` | EdDSA key that signs updates (`generate_keys -x`); its public half is `SPARKLE_PUBLIC_KEY` in `project.yml` |
+| `TAP_DEPLOY_KEY` | SSH key with write access to the Homebrew tap |
+
+To build a release locally:
+
+```sh
+SIGN_IDENTITY="Developer ID Application: ..." NOTARY_PROFILE=<notarytool profile> make release
+scripts/make-appcast.py dist/GameAudioAssetManager-<version>-macos.zip <version> "$(git rev-list --count HEAD)" > dist/appcast.xml
+```
+
+Without the variables, `make release` produces an ad-hoc signed build for testing.
 
 ## Roadmap
 
