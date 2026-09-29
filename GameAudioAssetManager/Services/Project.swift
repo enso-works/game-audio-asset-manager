@@ -137,6 +137,18 @@ struct ExportOptions: Codable, Equatable, Sendable {
     var generateTypeScript = false
     /// Export the project automatically whenever a sound is saved.
     var autoExport = false
+    /// Where generated code goes, absolute or relative to the export folder (e.g. "../../src/audio" when sounds
+    /// go to public/audio in a web app). Empty means the export folder.
+    var codeFolder: String?
+
+    /// The folder for generated code when exporting to `destination`.
+    func codeDestination(for destination: URL) -> URL {
+        let folder = (codeFolder ?? "").trimmingCharacters(in: .whitespaces)
+        if folder.isEmpty { return destination }
+        let expanded = (folder as NSString).expandingTildeInPath
+        if expanded.hasPrefix("/") { return URL(fileURLWithPath: expanded).standardizedFileURL }
+        return destination.appendingPathComponent(folder).standardizedFileURL
+    }
 }
 
 extension JSONEncoder {

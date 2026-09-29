@@ -96,6 +96,31 @@ final class EventExportTests: XCTestCase {
         XCTAssertEqual(CodeGenerator.godotEventPath("player/jump"), "events/player/jump.tres")
     }
 
+    func testCodeFolderResolvesRelativeToTheExportFolder() {
+        let destination = URL(fileURLWithPath: "/games/rally/public/audio")
+        var options = ExportOptions()
+        XCTAssertEqual(options.codeDestination(for: destination), destination)
+        options.codeFolder = "  "
+        XCTAssertEqual(options.codeDestination(for: destination), destination)
+        options.codeFolder = "../../src/audio"
+        XCTAssertEqual(options.codeDestination(for: destination).path, "/games/rally/src/audio")
+        options.codeFolder = "/tmp/code"
+        XCTAssertEqual(options.codeDestination(for: destination).path, "/tmp/code")
+    }
+
+    func testExportWritesCodeToTheCodeFolderAndDataWithTheSounds() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("code-folder-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let destination = root.appendingPathComponent("public/audio")
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        var options = ExportOptions(writeManifest: true, writeCredits: false, generateTypeScript: true)
+        options.codeFolder = "../../src/audio"
+        let report = await ProjectExporter.run(ProjectExportPlan(), to: destination, projectName: "Test", options: options, wholeProject: true) { _, _ in }
+        let written = Set(report.extraFiles.map { $0.standardizedFileURL.path.replacingOccurrences(of: root.standardizedFileURL.path, with: "") })
+        // sounds.ts is empty without sounds, so it is skipped.
+        XCTAssertEqual(written, ["/public/audio/\(ProjectExporter.manifestName)", "/src/audio/\(WebAudioGenerator.fileName)"])
+    }
+
     func testWebEngineAndManifestIncludeEventsAndBuses() throws {
         var spatialEvent = SoundEvent(bus: "SFX/World")
         spatialEvent.spatial = SpatialSettings(attenuation: .inverseSquare, unitSize: 4, maxDistance: 40)

@@ -189,28 +189,29 @@ enum ProjectExporter {
         for event in events where !event.missing.isEmpty {
             report.notes.append("Event \(event.key): \(event.missing.count) sound(s) not in a project folder were skipped (\(event.missing.joined(separator: ", "))).")
         }
-        var generated: [(Bool, String, () -> String)] = [
-            (options.writeManifest, manifestName, { manifest(sounds, events: events, buses: plan.buses, projectName: projectName) }),
-            (options.writeCredits, creditsName, { credits(plan, projectName: projectName) ?? "" }),
-            (options.generateGodot, CodeGenerator.godotName, { CodeGenerator.godot(sounds, events: events, buses: plan.buses, projectName: projectName, exportFolder: destination) }),
-            (options.generateTypeScript, CodeGenerator.typeScriptName, { CodeGenerator.typeScript(sounds, projectName: projectName) }),
-            (options.generateTypeScript, WebAudioGenerator.fileName, { WebAudioGenerator.engine(events: events, buses: plan.buses, projectName: projectName) }),
+        // Code can live apart from the sounds (src/ next to public/ in a web app); data files stay with the sounds.
+        let code = options.codeDestination(for: destination)
+        var generated: [(Bool, URL, () -> String)] = [
+            (options.writeManifest, destination.appendingPathComponent(manifestName), { manifest(sounds, events: events, buses: plan.buses, projectName: projectName) }),
+            (options.writeCredits, destination.appendingPathComponent(creditsName), { credits(plan, projectName: projectName) ?? "" }),
+            (options.generateGodot, code.appendingPathComponent(CodeGenerator.godotName), { CodeGenerator.godot(sounds, events: events, buses: plan.buses, projectName: projectName, exportFolder: destination) }),
+            (options.generateTypeScript, code.appendingPathComponent(CodeGenerator.typeScriptName), { CodeGenerator.typeScript(sounds, projectName: projectName) }),
+            (options.generateTypeScript, code.appendingPathComponent(WebAudioGenerator.fileName), { WebAudioGenerator.engine(events: events, buses: plan.buses, projectName: projectName) }),
         ]
         if options.generateGodot {
             let base = CodeGenerator.godotResourcePath(for: destination)
             if base.isEmpty, !events.isEmpty {
                 report.notes.append("Godot event resources need the export folder inside a Godot project (next to or below project.godot); they were skipped.")
             } else {
-                generated.append((true, CodeGenerator.godotBusLayoutName, { CodeGenerator.godotBusLayout(plan.buses) }))
+                generated.append((true, destination.appendingPathComponent(CodeGenerator.godotBusLayoutName), { CodeGenerator.godotBusLayout(plan.buses) }))
                 for event in events where !event.godotSounds.isEmpty {
-                    generated.append((true, CodeGenerator.godotEventPath(event.key), { CodeGenerator.godotEvent(event, resourceBase: base) }))
+                    generated.append((true, destination.appendingPathComponent(CodeGenerator.godotEventPath(event.key)), { CodeGenerator.godotEvent(event, resourceBase: base) }))
                 }
             }
         }
-        for (enabled, name, text) in generated where enabled {
+        for (enabled, url, text) in generated where enabled {
             let content = text()
             guard !content.isEmpty else { continue }
-            let url = destination.appendingPathComponent(name)
             try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             if (try? content.write(to: url, atomically: true, encoding: .utf8)) != nil {
                 report.extraFiles.append(url)

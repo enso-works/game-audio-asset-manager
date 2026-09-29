@@ -72,11 +72,15 @@ struct ProjectExportView: View {
                     Toggle("\(ProjectExporter.manifestName): paths, durations, loops, groups", isOn: options.writeManifest)
                     Toggle("\(ProjectExporter.creditsName): sources for attribution", isOn: options.writeCredits)
                     Toggle("\(CodeGenerator.godotName): Godot Sounds class with preloads and groups", isOn: options.generateGodot)
-                    Toggle("\(CodeGenerator.typeScriptName): typed sound keys for three.js", isOn: options.generateTypeScript)
+                    Toggle("\(CodeGenerator.typeScriptName) and \(WebAudioGenerator.fileName): typed keys and a Web Audio engine", isOn: options.generateTypeScript)
+                    TextField("Code folder", text: Binding(
+                        get: { options.wrappedValue.codeFolder ?? "" },
+                        set: { options.wrappedValue.codeFolder = $0.isEmpty ? nil : $0 }
+                    ), prompt: Text("Same as the export folder"))
                 } header: {
                     Text("Generated files")
                 } footer: {
-                    Text(isWholeProject ? "Written to the export folder. Names like jump_01, jump_02 become the group \"jump\"." : "Only written when exporting the whole project.")
+                    Text(isWholeProject ? "The manifest and credits go to the export folder; code goes to the code folder, absolute or relative to the export folder (e.g. ../../src/audio when sounds go to public/audio). Names like jump_01, jump_02 become the group \"jump\"." : "Only written when exporting the whole project.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
