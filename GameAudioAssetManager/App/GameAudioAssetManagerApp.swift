@@ -8,6 +8,11 @@ struct GameAudioAssetManagerApp: App {
     @State private var navigation = Navigation()
     @State private var exportService = ExportService()
     @State private var auditioner = EventAuditioner()
+    @State private var updater = Updater.shared
+
+    init() {
+        Updater.shared.start()
+    }
 
     var body: some Scene {
         Window("Game Audio Asset Manager", id: "main") {
@@ -32,6 +37,10 @@ struct GameAudioAssetManagerApp: App {
                 }
         }
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates...") { updater.checkForUpdates() }
+                    .disabled(!updater.isAvailable)
+            }
             CommandGroup(replacing: .newItem) {}
             CommandGroup(replacing: .saveItem) {
                 Button("Save") {
@@ -88,12 +97,14 @@ struct GameAudioAssetManagerApp: App {
         Settings {
             SettingsView()
                 .environment(library)
+                .environment(updater)
         }
     }
 }
 
 struct SettingsView: View {
     @Environment(Library.self) private var library
+    @Environment(Updater.self) private var updater
 
     var body: some View {
         Form {
@@ -118,6 +129,19 @@ struct SettingsView: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Button("Reset") { library.setExportFolder(nil) }
+                }
+            }
+            Section("Updates") {
+                LabeledContent("Version", value: updater.version)
+                if updater.isAvailable {
+                    Toggle("Check for updates automatically", isOn: Binding(
+                        get: { updater.automaticallyChecks },
+                        set: { updater.automaticallyChecks = $0 }
+                    ))
+                    Button("Check for Updates Now") { updater.checkForUpdates() }
+                } else {
+                    Text("Updates are available in release builds (download from GitHub or install with Homebrew).")
+                        .foregroundStyle(.secondary)
                 }
             }
             LabeledContent("yt-dlp") { Text(Tools.ytDlp?.path ?? "Not found (brew install yt-dlp)") }
