@@ -147,7 +147,9 @@ enum WebAudioGenerator {
 
             const index = this.pick(key, event);
             if (index === undefined) return undefined;
-            const info = sounds[event.sounds[index].sound] as SoundInfo;
+            const entry = event.sounds[index];
+            if (!entry) return undefined;
+            const info = sounds[entry.sound] as SoundInfo;
             const buffer = await this.buffer(info.url);
 
             const playing = this.active.get(key) ?? [];
@@ -217,11 +219,12 @@ enum WebAudioGenerator {
               const candidates = [...Array(count).keys()].filter(
                 (i) => event.playback !== 'randomNoRepeat' || count === 1 || i !== last,
               );
-              const total = candidates.reduce((sum, i) => sum + Math.max(event.sounds[i].weight, 0), 0);
+              const weight = (i: number): number => Math.max(event.sounds[i]?.weight ?? 0, 0);
+              const total = candidates.reduce((sum, i) => sum + weight(i), 0);
               let threshold = Math.random() * total;
-              index = candidates[candidates.length - 1];
+              index = candidates[candidates.length - 1] ?? 0;
               for (const i of candidates) {
-                threshold -= Math.max(event.sounds[i].weight, 0);
+                threshold -= weight(i);
                 if (threshold < 0) {
                   index = i;
                   break;

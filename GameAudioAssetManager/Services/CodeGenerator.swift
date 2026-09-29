@@ -266,7 +266,7 @@ enum CodeGenerator {
             "/** Picks a random variation, e.g. pickVariant('sfx/jump') -> 'sfx/jump_03'. */",
             "export function pickVariant(group: SoundGroup): SoundKey {",
             "  const list: readonly SoundKey[] = groups[group];",
-            "  return list[Math.floor(Math.random() * list.length)];",
+            "  return list[Math.floor(Math.random() * list.length)] as SoundKey;",
             "}",
             "",
         ]
